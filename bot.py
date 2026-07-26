@@ -1,21 +1,55 @@
-import requests, json, time, logging, re, os, urllib3, html, sys, asyncio, urllib.parse
-from typing import Dict, List, Optional
+python
+import telebot
+import os
+import time
+import threading
+import requests
+import json
+import re
+import urllib.parse
+import zipfile
+from io import BytesIO
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import telebot
-from telebot import types
-from curl_cffi.requests import AsyncSession
+from flask import Flask
 from requests.adapters import HTTPAdapter
+from curl_cffi.requests import AsyncSession
+import asyncio
+import sys
+import logging
+import urllib3
 
-# ===== НАСТРОЙКИ =====
+# ============================================================
+# НАСТРОЙКИ
+# ============================================================
+
 for var in list(os.environ.keys()):
     if 'proxy' in var.lower() or 'socks' in var.lower(): os.environ.pop(var, None)
-from telebot import apihelper; apihelper.proxy = {}
+from telebot import apihelper
+apihelper.proxy = {}
 
-TELEGRAM_BOT_TOKEN = "8838554185:AAEcnODJD01mvseF2Lnvr3WbYB88Y2KTNAk"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8838554185:AAEcnODJD01mvseF2Lnvr3WbYB88Y2KTNAk")
 MAX_THREADS = 3
 LOGO_URL = "https://1s4oyld5dc.ucarecd.net/c1f49818-fb27-4bf7-9427-1ed661dc880d/"
 ALLOWED_USERS = [5992692128]
+
+# ============================================================
+# FLASK ДЛЯ RENDER
+# ============================================================
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "🤖 БОТ РАБОТАЕТ! ✅"
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+# ============================================================
+# ЛОГИ
+# ============================================================
 
 os.makedirs("data/profiles", exist_ok=True)
 os.makedirs("data/logs", exist_ok=True)
@@ -25,7 +59,6 @@ os.makedirs("output", exist_ok=True)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
                     handlers=[logging.FileHandler('data/logs/bot.log', encoding='utf-8'), logging.StreamHandler()])
 logger = logging.getLogger(__name__)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
