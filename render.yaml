@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: kai-telegram-bot
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
-    envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        value: 8838554185:AAEcnODJD01mvseF2Lnvr3WbYB88Y2KTNAk
