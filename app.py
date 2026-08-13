@@ -1,21 +1,37 @@
-from flask import Flask
-import threading
 import os
+import time
+import threading
+import logging
+from handlers import Bot
+from config import TELEGRAM_BOT_TOKEN
 
-# ТВОЙ БОТ (импортируй как у тебя)
-from bot import bot
+# ============================================================
+# СОЗДАЁМ ПАПКИ ПЕРЕД ЛОГИРОВАНИЕМ
+# ============================================================
+os.makedirs("data/profiles", exist_ok=True)
+os.makedirs("data/logs", exist_ok=True)
+os.makedirs("incoming_cookies/raw", exist_ok=True)
+os.makedirs("results", exist_ok=True)
 
-app = Flask(__name__)
+# ============================================================
+# НАСТРОЙКА ЛОГОВ (ТОЛЬКО В КОНСОЛЬ, БЕЗ ФАЙЛА)
+# ============================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()  # ТОЛЬКО В КОНСОЛЬ
+    ]
+)
 
-@app.route('/')
-def home():
-    return "Бот работает!"
+logger = logging.getLogger(__name__)
 
-def run_bot():
-    bot.polling(none_stop=True)
-
+# ============================================================
+# ЗАПУСК
+# ============================================================
 if __name__ == "__main__":
-    thread = threading.Thread(target=run_bot)
-    thread.start()
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    logger.info("🤖 KAI CHECKER запущен!")
+    print("🤖 Бот Kai Checker готов к работе!")
+    
+    bot = Bot(TELEGRAM_BOT_TOKEN)
+    bot.run()
